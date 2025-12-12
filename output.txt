@@ -1,0 +1,1 @@
+A new Git repository has been initialized in the current root directory.
