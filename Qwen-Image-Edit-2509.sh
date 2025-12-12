@@ -1,8 +1,8 @@
 accelerate launch DiffSynth-Studio/examples/qwen_image/model_training/train.py \
-  --dataset_base_path data/example_image_dataset \
-  --dataset_metadata_path data/example_image_dataset/metadata_qwen_imgae_edit_multi.json \
-  --data_file_keys "image,edit_image" \
-  --extra_inputs "edit_image" \
+  --dataset_base_path pico-banana-400k-subject_driven/openimages \
+  --dataset_metadata_path dataset_qwen_pe.json \
+  --data_file_keys "image,edit_image,ref_gt,back_mask" \
+  --extra_inputs "edit_image,ref_gt,back_mask" \
   --max_pixels 1048576 \
   --dataset_repeat 50 \
   --model_id_with_origin_paths "Qwen/Qwen-Image-Edit-2509:transformer/diffusion_pytorch_model*.safetensors,Qwen/Qwen-Image:text_encoder/model*.safetensors,Qwen/Qwen-Image:vae/diffusion_pytorch_model.safetensors" \
