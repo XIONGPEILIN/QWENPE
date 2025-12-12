@@ -5,9 +5,12 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import torchvision.transforms as transforms
+import torchvision.transforms.functional as TF
 from PIL import Image
 from tqdm import tqdm
-from multiprocessing import Pool, cpu_count
+from torch.multiprocessing import Pool
+from multiprocessing import cpu_count
+from torchvision.transforms import InterpolationMode
 
 # 配置路径
 BASE_DIR = "pico-banana-400k-subject_driven"
@@ -18,9 +21,40 @@ REF_GT_DIR = os.path.join(BASE_DIR, "openimages/ref_gt_generated")
 # 确保输出目录存在
 os.makedirs(REF_GT_DIR, exist_ok=True)
 
-# 强制使用 GPU
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-print(f"Using device: {DEVICE}")
+# 建议使用 CPU 以避免多进程 CUDA 问题，除非显存非常充足
+# 如果遇到 RuntimeError: CUDA error，请改为 "cpu"
+DEVICE = "cpu" 
+# DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+MAX_PIXELS = 1048576  # 与训练脚本默认 max_pixels 对齐
+
+def _compute_target_size(width, height, max_pixels=MAX_PIXELS, div=16):
+    # 复用训练时的动态分辨率逻辑：先控制总像素，再向下取整到 16 倍数
+    if width * height > max_pixels:
+        scale = (width * height / max_pixels) ** 0.5
+        height = int(height / scale)
+        width = int(width / scale)
+    height = (height // div) * div
+    width = (width // div) * div
+    return width, height
+
+def _resize_pil_like_operator(img, target_w, target_h):
+    # 与 ImageCropAndResize 的 resize+center_crop 行为一致（双线性）
+    scale = max(target_w / img.size[0], target_h / img.size[1])
+    new_h, new_w = round(img.size[1] * scale), round(img.size[0] * scale)
+    img = TF.resize(img, (new_h, new_w), interpolation=InterpolationMode.BILINEAR)
+    img = TF.center_crop(img, (target_h, target_w))
+    return img
+
+def _resize_mask_like_operator(mask, target_w, target_h):
+    # 与上面一致的几何变换，但掩码用最近邻
+    _, _, h, w = mask.shape
+    scale = max(target_w / w, target_h / h)
+    new_h, new_w = round(h * scale), round(w * scale)
+    resized = F.interpolate(mask, size=(new_h, new_w), mode="nearest")
+    top = max((new_h - target_h) // 2, 0)
+    left = max((new_w - target_w) // 2, 0)
+    resized = resized[:, :, top:top + target_h, left:left + target_w]
+    return resized
 
 def _load_mask_tensor(path, size=None):
     try:
@@ -28,9 +62,7 @@ def _load_mask_tensor(path, size=None):
         transform = transforms.ToTensor()
         t = transform(m)
         t = t.unsqueeze(0)
-        # 移至 GPU
         t = t.to(DEVICE)
-        
         if size is not None:
             target_h, target_w = size[1], size[0]
             if t.shape[-2:] != (target_h, target_w):
@@ -38,32 +70,6 @@ def _load_mask_tensor(path, size=None):
         return t
     except:
         return None
-
-def _get_bbox_mask_tensor(mask_tensor):
-    if mask_tensor is None: return None
-    # 保持在 GPU 上运算
-    pts = torch.nonzero(mask_tensor[0, 0] > 0.5, as_tuple=True)
-    if len(pts[0]) == 0:
-        return torch.zeros_like(mask_tensor)
-    
-    y_min, y_max = pts[0].min().item(), pts[0].max().item()
-    x_min, x_max = pts[1].min().item(), pts[1].max().item()
-    
-    patch_size = 16
-    y_min_exp = (y_min // patch_size) * patch_size
-    x_min_exp = (x_min // patch_size) * patch_size
-    y_max_exp = ((y_max + patch_size) // patch_size) * patch_size - 1
-    x_max_exp = ((x_max + patch_size) // patch_size) * patch_size - 1
-    
-    H, W = mask_tensor.shape[-2:]
-    y_min_exp = max(0, y_min_exp)
-    y_max_exp = min(H - 1, y_max_exp)
-    x_min_exp = max(0, x_min_exp)
-    x_max_exp = min(W - 1, x_max_exp)
-    
-    box_mask = torch.zeros_like(mask_tensor)
-    box_mask[:, :, y_min_exp : y_max_exp + 1, x_min_exp : x_max_exp + 1] = 1.0
-    return box_mask
 
 def process_one_file(audit_file):
     REL_ROOT = os.path.join(BASE_DIR, "openimages")
@@ -79,7 +85,7 @@ def process_one_file(audit_file):
         if bg_sim <= 0.9:
             return None
 
-        # Load Log to get Image Size and Paths
+        # Load Log
         log_rel_path = audit_data.get("log_path")
         if not log_rel_path: return None
         log_full_path = os.path.join(BASE_DIR, log_rel_path)
@@ -95,20 +101,18 @@ def process_one_file(audit_file):
         edit_full = os.path.join(BASE_DIR, edit_rel_path)
         if not os.path.exists(edit_full): return None
         
-        # We need image size for mask loading
         with Image.open(edit_full) as img:
             img_size = img.size # (W, H)
 
-        # 2. Accumulate Masks (Additive Logic)
+        # 2. Accumulate Masks (Precise Only)
         precise_accum = None
-        bbox_accum = None
         
         for kind in ["add", "remove"]:
             kind_res = results.get(kind, {})
             sub_results = kind_res.get("sub_mask_results", [])
             has_valid_subs = False
             
-            # Try sub-masks first
+            # Try sub-masks
             for sub in sub_results:
                 if sub.get("cos_sim", 0) < 0.9: # MODIFIED
                     mask_rel = sub.get("mask_path")
@@ -118,15 +122,8 @@ def process_one_file(audit_file):
                             t = _load_mask_tensor(mask_full, size=img_size)
                             if t is not None:
                                 has_valid_subs = True
-                                
-                                # Add to Precise Accum
                                 if precise_accum is None: precise_accum = t
                                 else: precise_accum = torch.max(precise_accum, t)
-                                
-                                # Add to BBox Accum
-                                b_t = _get_bbox_mask_tensor(t)
-                                if bbox_accum is None: bbox_accum = b_t
-                                else: bbox_accum = torch.max(bbox_accum, b_t)
             
             # Fallback to Merged Mask
             if not has_valid_subs:
@@ -138,65 +135,80 @@ def process_one_file(audit_file):
                         if t is not None:
                             if precise_accum is None: precise_accum = t
                             else: precise_accum = torch.max(precise_accum, t)
-                            
-                            b_t = _get_bbox_mask_tensor(t)
-                            if bbox_accum is None: bbox_accum = b_t
-                            else: bbox_accum = torch.max(bbox_accum, b_t)
 
-        if precise_accum is None or bbox_accum is None:
+        if precise_accum is None:
             return None
 
-        # 3. Extract BBox from bbox_accum
-        pts = torch.nonzero(bbox_accum[0, 0] > 0.5, as_tuple=True)
+        # 3. Resize image/mask to training-time resolution (16 对齐 & 1M 像素限制)
+        tgt_w, tgt_h = _compute_target_size(img_size[0], img_size[1])
+        if tgt_w == 0 or tgt_h == 0:
+            return None
+        precise_accum = _resize_mask_like_operator(precise_accum, tgt_w, tgt_h)
+
+        # 4. Extract BBox from precise_accum (Aligned to 16)
+        pts = torch.nonzero(precise_accum[0, 0] > 0.5, as_tuple=True)
         if len(pts[0]) == 0: return None
         
         y_min, y_max = pts[0].min().item(), pts[0].max().item()
         x_min, x_max = pts[1].min().item(), pts[1].max().item()
         
-        # PIL Crop: (left, upper, right, lower) -> (x_min, y_min, x_max+1, y_max+1)
-        crop_box = (x_min, y_min, x_max + 1, y_max + 1)
+        # Align to 16
+        patch_size = 16
+        y_min = (y_min // patch_size) * patch_size
+        x_min = (x_min // patch_size) * patch_size
+        # Add patch_size before div to ceil, then sub 1? 
+        # Verify script logic: ((y_max + patch_size) // patch_size) * patch_size - 1
+        # This makes sure the box covers y_max and ends on a grid boundary - 1.
+        # But PIL crop is exclusive for the second coordinate.
+        # So we want the boundary itself.
         
-        # 4. Generate Ref GT and Final Mask
+        y_max_bound = ((y_max + patch_size) // patch_size) * patch_size
+        x_max_bound = ((x_max + patch_size) // patch_size) * patch_size
+        
+        # Clip to image size
+        H, W = precise_accum.shape[-2:]
+        y_min = max(0, y_min)
+        x_min = max(0, x_min)
+        y_max_bound = min(H, y_max_bound)
+        x_max_bound = min(W, x_max_bound)
+        
+        crop_box = (x_min, y_min, x_max_bound, y_max_bound)
+        
+        # 5. Generate Ref GT and Final Mask
         item_idx = audit_data.get("item_idx")
         ref_gt_filename = f"ref_gt_{item_idx}.png"
         ref_gt_full_path = os.path.join(REF_GT_DIR, ref_gt_filename)
-        
-        # Mask filename
         new_mask_filename = f"mask_combined_{item_idx}.png"
         new_mask_full_path = os.path.join(REF_GT_DIR, new_mask_filename)
         
-        # Only process if output doesn't exist
         if not os.path.exists(ref_gt_full_path):
             edit_img = Image.open(edit_full).convert("RGB")
+            edit_img = _resize_pil_like_operator(edit_img, tgt_w, tgt_h)
             
             # Crop Image
             gt_crop = edit_img.crop(crop_box)
             
             # Crop Precise Mask
-            # precise_accum is [1, 1, H, W] tensor on GPU
-            # Slice on GPU
-            mask_slice = precise_accum[0, 0, y_min:y_max+1, x_min:x_max+1]
-            
-            # Move to CPU for PIL
-            mask_crop_pil = transforms.ToPILImage()(mask_slice.cpu())
+            mask_slice = precise_accum[0, 0, y_min:y_max_bound, x_min:x_max_bound]
+            mask_crop_pil = transforms.ToPILImage()(mask_slice.cpu()).convert("L")
             
             # Apply Mask
-            ref_gt_img = Image.new("RGB", gt_crop.size, (0, 0, 0))
+            # Use white background so transparent areas are white instead of black
+            ref_gt_img = Image.new("RGB", gt_crop.size, (255, 255, 255))
             ref_gt_img.paste(gt_crop, (0, 0), mask=mask_crop_pil)
             ref_gt_img.save(ref_gt_full_path)
             
-            # Save the Full Precise Mask (for back_mask)
-            full_mask_pil = transforms.ToPILImage()(precise_accum[0].cpu())
+            # Save Full Precise Mask
+            full_mask_pil = transforms.ToPILImage()(precise_accum[0].cpu()).convert("L")
             full_mask_pil.save(new_mask_full_path)
 
-        # 5. Construct Entry
+        # 6. Construct Entry
         original_text = log_data.get("original_item", {}).get("text", "")
         if not original_text:
-             original_text = log_data.get("instruction", "")
+            original_text = log_data.get("instruction", "")
         
         prompt = f"Picture 1 is the image to modify. {original_text}"
         
-        # Path processing
         bg_full = os.path.join(BASE_DIR, bg_rel_path)
         bg_rel_path = os.path.relpath(bg_full, REL_ROOT)
         edit_rel_path = os.path.relpath(edit_full, REL_ROOT)
@@ -218,19 +230,8 @@ def main():
     audit_files = glob.glob(os.path.join(AUDIT_DIR, "*_dino_audit.json"))
     print(f"Found {len(audit_files)} audit files. Processing with {cpu_count()} CPUs...")
     
-    # 注意：在多进程中使用 CUDA 需要注意 spawn 方法
-    # 如果简单 Pool 可能报错。对于简单任务，单进程 GPU 可能比 多进程 GPU 更稳定且不慢（因为 I/O 也是瓶颈）
-    # 或者设置 start method
-    try:
-        torch.multiprocessing.set_start_method('spawn', force=True)
-    except RuntimeError:
-        pass
-
-    dataset = []
-    
-    # 减少并发数以避免显存溢出，假设每个进程占用少量显存
-    # 如果 GPU 显存大，可以多开。这里保守设为 8。
-    with Pool(processes=8) as pool:
+    # Use CPU by default for stability with multiprocessing
+    with Pool(processes=4) as pool:
         results = list(tqdm(pool.imap(process_one_file, audit_files), total=len(audit_files)))
     
     dataset = [r for r in results if r is not None]
