@@ -13,7 +13,7 @@ accelerate launch DiffSynth-Studio/examples/qwen_image/model_training/train.py \
   --extra_inputs "edit_image,ref_gt,back_mask" \
   --max_pixels 1048576 \
   --dataset_repeat 1 \
-  --model_id_with_origin_paths "Qwen/Qwen-Image-Edit-2509:transformer/diffusion_pytorch_model*.safetensors" \
+  --model_id_with_origin_paths "Qwen/Qwen-Image:text_encoder/model*.safetensors,Qwen/Qwen-Image:vae/diffusion_pytorch_model.safetensors" \
   --learning_rate 1 \
   --num_epochs 1 \
   --remove_prefix_in_ckpt "pipe.dit." \
