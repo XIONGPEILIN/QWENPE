@@ -4,6 +4,7 @@ import glob
 import numpy as np
 import torch
 import torch.nn.functional as F
+import shutil
 import torchvision.transforms as transforms
 import torchvision.transforms.functional as TF
 from PIL import Image
@@ -14,9 +15,10 @@ from torchvision.transforms import InterpolationMode
 
 # 配置路径
 BASE_DIR = "pico-banana-400k-subject_driven"
-AUDIT_DIR = os.path.join(BASE_DIR, "openimages/dino_mask_audit")
-OUTPUT_JSON = "dataset_qwen_pe.json"
-REF_GT_DIR = os.path.join(BASE_DIR, "openimages/ref_gt_generated")
+AUDIT_DIR = os.path.join(BASE_DIR, "openimages/dino_mask_audit_1")
+OUTPUT_JSON = "dataset_qwen_pe_all.json"
+REF_GT_DIR = os.path.join(BASE_DIR, "openimages/ref_gt_generated_all")
+EDIT_ALIGNED_DIR = os.path.join(BASE_DIR, "openimages/edit_aligned_all")
 
 # 确保输出目录存在
 os.makedirs(REF_GT_DIR, exist_ok=True)
@@ -41,7 +43,15 @@ def _resize_pil_like_operator(img, target_w, target_h):
     # 与 ImageCropAndResize 的 resize+center_crop 行为一致（双线性）
     scale = max(target_w / img.size[0], target_h / img.size[1])
     new_h, new_w = round(img.size[1] * scale), round(img.size[0] * scale)
-    img = TF.resize(img, (new_h, new_w), interpolation=InterpolationMode.BILINEAR)
+    img = TF.resize(img, (new_h, new_w), interpolation=InterpolationMode.BILINEAR )
+    img = TF.center_crop(img, (target_h, target_w))
+    return img
+
+def _resize_pil_lanczos(img, target_w, target_h):
+    # LANCZOS 版本，几何逻辑同上
+    scale = max(target_w / img.size[0], target_h / img.size[1])
+    new_h, new_w = round(img.size[1] * scale), round(img.size[0] * scale)
+    img = TF.resize(img, (new_h, new_w), interpolation=InterpolationMode.LANCZOS)
     img = TF.center_crop(img, (target_h, target_w))
     return img
 
@@ -82,7 +92,7 @@ def process_one_file(audit_file):
         
         # 1. 筛选 background_bbox_sim > 0.9
         bg_sim = global_res.get("background_bbox_sim", 0)
-        if bg_sim <= 0.9:
+        if bg_sim < 0.9:
             return None
 
         # Load Log
@@ -103,6 +113,11 @@ def process_one_file(audit_file):
         
         with Image.open(edit_full) as img:
             img_size = img.size # (W, H)
+        
+        # Load source image (edit_image) for alignment
+        bg_full = os.path.join(BASE_DIR, bg_rel_path)
+        if not os.path.exists(bg_full):
+            return None
 
         # 2. Accumulate Masks (Precise Only)
         precise_accum = None
@@ -174,12 +189,20 @@ def process_one_file(audit_file):
         
         crop_box = (x_min, y_min, x_max_bound, y_max_bound)
         
-        # 5. Generate Ref GT and Final Mask
+        # 5. Generate Ref GT, Final Mask, and aligned edit_image
         item_idx = audit_data.get("item_idx")
         ref_gt_filename = f"ref_gt_{item_idx}.png"
         ref_gt_full_path = os.path.join(REF_GT_DIR, ref_gt_filename)
         new_mask_filename = f"mask_combined_{item_idx}.png"
         new_mask_full_path = os.path.join(REF_GT_DIR, new_mask_filename)
+        aligned_edit_filename = f"edit_aligned_{item_idx}.png"
+        aligned_edit_full_path = os.path.join(EDIT_ALIGNED_DIR, aligned_edit_filename)
+
+        # Save aligned edit_image (source) using LANCZOS
+        if not os.path.exists(aligned_edit_full_path):
+            with Image.open(bg_full).convert("RGB") as bg_img:
+                bg_resized = _resize_pil_lanczos(bg_img, tgt_w, tgt_h)
+                bg_resized.save(aligned_edit_full_path)
         
         if not os.path.exists(ref_gt_full_path):
             edit_img = Image.open(edit_full).convert("RGB")
@@ -209,16 +232,16 @@ def process_one_file(audit_file):
         
         prompt = f"Picture 1 is the image to modify. {original_text}"
         
-        bg_full = os.path.join(BASE_DIR, bg_rel_path)
         bg_rel_path = os.path.relpath(bg_full, REL_ROOT)
         edit_rel_path = os.path.relpath(edit_full, REL_ROOT)
+        aligned_edit_rel_path = os.path.relpath(aligned_edit_full_path, REL_ROOT)
         ref_gt_rel_path = os.path.relpath(ref_gt_full_path, REL_ROOT)
         final_mask_rel_path = os.path.relpath(new_mask_full_path, REL_ROOT)
 
         return {
             "prompt": prompt,
             "image": edit_rel_path,        # GT
-            "edit_image": [bg_rel_path],   # Source
+            "edit_image": [aligned_edit_rel_path],   # Source (aligned to target resolution)
             "ref_gt": ref_gt_rel_path,
             "back_mask": final_mask_rel_path
         }
@@ -228,10 +251,16 @@ def process_one_file(audit_file):
 
 def main():
     audit_files = glob.glob(os.path.join(AUDIT_DIR, "*_dino_audit.json"))
+    # audit_files = audit_files[:1000]  # limit for quick test run
     print(f"Found {len(audit_files)} audit files. Processing with {cpu_count()} CPUs...")
+
+    # 清空并重建对齐后的 edit_image 输出目录，避免旧文件残留
+    if os.path.exists(EDIT_ALIGNED_DIR):
+        shutil.rmtree(EDIT_ALIGNED_DIR)
+    os.makedirs(EDIT_ALIGNED_DIR, exist_ok=True)
     
     # Use CPU by default for stability with multiprocessing
-    with Pool(processes=4) as pool:
+    with Pool(processes=8) as pool:
         results = list(tqdm(pool.imap(process_one_file, audit_files), total=len(audit_files)))
     
     dataset = [r for r in results if r is not None]
