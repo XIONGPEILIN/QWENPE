@@ -1,25 +1,7 @@
-"""
-Quick LDM-bridge smoke test for Qwen-Image using one dataset_qwen_pe.json entry.
-
-Sample (paths relative to repo root):
-{
-    "prompt": "Picture 1 is the image to modify. Replace the soccer ball with a brown American football, ensuring the new object has appropriate textures, reflections, and shadows that seamlessly match the existing field and player's lighting and perspective, while maintaining its position relative to the player's foot.",
-    "image": "edited/sft/66485.png",
-    "edit_image": ["edit_aligned/edit_aligned_10569.png"],
-    "ref_gt": "ref_gt_generated/ref_gt_10569.png",
-    "back_mask": "ref_gt_generated/mask_combined_10569.png"
-}
-
-The script:
-- Finds repo root by locating dataset_qwen_pe.json
-- Loads the above images
-- Loads STE + LoRA weights from train/Qwen-Image-Edit-2509_lora-rank512/step-1000.safetensors
-- Runs pipeline with LDM bridge sampling (source -> target)
-- Saves ldm_bridge_output.png at repo root
-"""
-
 from pathlib import Path
 from typing import List, Tuple
+import json
+import random
 
 from PIL import Image
 import torch
@@ -79,25 +61,17 @@ def main():
 
     from diffsynth.pipelines.qwen_image import QwenImagePipeline, ModelConfig
 
-    sample =   {
-    "prompt": "Picture 1 is the image to modify. Remove the adult white and grey seagull from the metal grate, meticulously reconstructing the underlying weathered metal mesh and the rusted boat structure with matching textures, color, and lighting to seamlessly integrate with the surrounding environment.",
-    "image": "edited/sft/62991.png",
-    "edit_image": [
-      "edit_aligned/edit_aligned_10018.png"
-    ],
-    "ref_gt": "ref_gt_generated/ref_gt_10018.png",
-    "back_mask": "ref_gt_generated/mask_combined_10018.png"         
-  }
+    # Load dataset and randomly select 10 samples
+    dataset_path = repo_root / "dataset_qwen_pe_all.json"
+    with open(dataset_path, "r") as f:
+        dataset = json.load(f)
+    
+    random.seed(811)
+    selected_samples = random.sample(dataset, min(20, len(dataset)))
+    
+    print(f"Loaded {len(dataset)} samples from {dataset_path}")
+    print(f"Testing {len(selected_samples)} randomly selected samples with seed=811")
     image_folder = "pico-banana-400k-subject_driven/openimages"
-    image_path = repo_root / image_folder / sample["image"]
-    edit_paths: List[Path] = [repo_root / image_folder / p for p in sample["edit_image"]]
-    back_mask_path = repo_root / image_folder / sample["back_mask"]
-
-    target_image = load_rgb(image_path)
-    edit_images = [load_rgb(p) for p in edit_paths]
-    back_mask = load_mask(back_mask_path)
-
-    width, height = target_image.size
 
     pipe = QwenImagePipeline.from_pretrained(
         torch_dtype=torch.bfloat16,
@@ -114,26 +88,56 @@ def main():
     )
 
     # Load STE + LoRA weights from training checkpoint
-    ste_lora_ckpt = repo_root / "train/Qwen-Image-Edit-2509_lora-rank512/step-1000.safetensors"
+    ste_lora_ckpt = repo_root / "train/Qwen-Image-Edit-2509_lora-rank512/step-15000.safetensors"
     ste_num, lora_num = load_ste_and_lora(pipe, ste_lora_ckpt)
-    print(f"Loaded {ste_num} STE tensors and {lora_num} LoRA tensors from {ste_lora_ckpt}")
+    print(f"Loaded {ste_num} STE tensors and {lora_num} LoRA tensors from {ste_lora_ckpt}\n")
 
-    image, sub_image = pipe(
-        prompt=sample["prompt"],
-        edit_image=edit_images,
-        back_mask=back_mask,
-        height=height,
-        width=width,
-        num_inference_steps=50,
-        cfg_scale=1.0,
-        seed=0,
-        pe_mask_dir=repo_root / "pe_masks",
-    )
+    # Test each selected sample
+    for idx, sample in enumerate(selected_samples, 1):
+        print(f"Processing sample {idx}/10: {sample['image']}")
+        
+        try:
+            image_path = repo_root / image_folder / sample["image"]
+            edit_paths: List[Path] = [repo_root / image_folder / p for p in sample["edit_image"]]
+            back_mask_path = repo_root / image_folder / sample["back_mask"]
 
-    out_path = repo_root / "ldm_bridge_output.png"
-    image.save(out_path)
-    sub_image.save(repo_root / "ldm_bridge_sub_output.png")
-    print(f"Saved LDM bridge test output to: {out_path}")
+            target_image = load_rgb(image_path)
+            edit_images = [load_rgb(p) for p in edit_paths]
+            back_mask = load_mask(back_mask_path)
+
+            width, height = target_image.size
+
+            # Create sample directory
+            sample_dir = repo_root / "test-cfg4" / str(idx)
+            sample_dir.mkdir(parents=True, exist_ok=True)
+
+            # Save debug images
+            edit_images[0].save(sample_dir / "debug_edit_image.png")
+            target_image.save(sample_dir / "target_image.png")
+            back_mask.save(sample_dir / "back_mask.png")
+
+            image, sub_image = pipe(
+                prompt=sample["prompt"],
+                edit_image=edit_images,
+                back_mask=back_mask,
+                height=height,
+                width=width,
+                num_inference_steps=50,
+                cfg_scale=4.0,
+                seed=0,
+                # pe_mask_dir=repo_root / "pe_masks",
+            )
+
+            # Save output images
+            image.save(sample_dir / "output.png")
+            sub_image.save(sample_dir / "output_sub.png")
+            print(f"  ✓ Saved output to: {sample_dir}\n")
+        
+        except Exception as e:
+            print(f"  ✗ Error processing sample {idx}: {e}\n")
+            continue
+    
+    print("Completed testing all 10 samples")
 
 
 if __name__ == "__main__":

@@ -6,3 +6,9 @@ dataset_qwen_pe.json
 dataset_qwen_pe_all.json
 
 pe_masks
+DiffSynth-Studio/
+vae_real_image_test
+test
+test-cfg4    
+bbox_stats.csv
+proxytext.sh

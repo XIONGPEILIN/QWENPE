@@ -41,7 +41,7 @@ accelerate launch DiffSynth-Studio/examples/qwen_image/model_training/train.py \
   --dataset_repeat 1 \
   --model_id_with_origin_paths "Qwen/Qwen-Image-Edit-2509:transformer/diffusion_pytorch_model*.safetensors" \
   --learning_rate 1 \
-  --num_epochs 500 \
+  --num_epochs 100 \
   --remove_prefix_in_ckpt "pipe.dit." \
   --output_path "$OUTPUT_PATH" \
   --lora_base_model "dit" \
@@ -55,4 +55,6 @@ accelerate launch DiffSynth-Studio/examples/qwen_image/model_training/train.py \
   --task "sft:train" \
   --save_steps 1000 \
   --use_gradient_checkpointing \
+  --resume_from_checkpoint "train/resume" \
+  --cfg_drop_prob 0.1 \
   # --disable_epoch_resume \
