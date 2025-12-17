@@ -55,6 +55,6 @@ accelerate launch DiffSynth-Studio/examples/qwen_image/model_training/train.py \
   --task "sft:train" \
   --save_steps 1000 \
   --use_gradient_checkpointing \
-  --resume_from_checkpoint "train/resume" \
   --cfg_drop_prob 0.1 \
-  # --disable_epoch_resume \
+  --lora_checkpoint 'train/Qwen-Image-Edit-2509_lora-rank512-old/step-15000.safetensors' \
+  --disable_epoch_resume
