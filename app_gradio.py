@@ -56,7 +56,7 @@ print("Initializing Pipeline...")
 # 使用指定的模型配置
 pipe = QwenImagePipeline.from_pretrained(
     torch_dtype=torch.bfloat16,
-    device="cuda:2",
+    device="cuda:1",
     model_configs=[
         ModelConfig(model_id="Qwen/Qwen-Image-Edit-2509", origin_file_pattern="transformer/diffusion_pytorch_model*.safetensors"),
         ModelConfig(model_id="Qwen/Qwen-Image", origin_file_pattern="text_encoder/model*.safetensors"),
@@ -95,14 +95,13 @@ def predict(input_dict, prompt, cfg_scale, steps, seed):
     # 1. 等比例缩放以符合 max_pixels (1048576)
     max_pixels = 1048576
     curr_pixels = orig_width * orig_height
-    if curr_pixels > max_pixels:
-        factor = (max_pixels / curr_pixels) ** 0.5
-        inter_width = int(orig_width * factor)
-        inter_height = int(orig_height * factor)
-        print(f"Scaling down from {orig_width}x{orig_height} to {inter_width}x{inter_height}")
-        image_pil = image_pil.resize((inter_width, inter_height), Image.LANCZOS)
-    else:
-        inter_width, inter_height = orig_width, orig_height
+
+    factor = (max_pixels / curr_pixels) ** 0.5
+    inter_width = int(orig_width * factor)
+    inter_height = int(orig_height * factor)
+    print(f"Scaling down from {orig_width}x{orig_height} to {inter_width}x{inter_height}")
+    image_pil = image_pil.resize((inter_width, inter_height), Image.LANCZOS)
+
 
     # 2. 计算 16 的倍数目标尺寸
     target_width = ((inter_width + 15) // 16) * 16
@@ -116,12 +115,14 @@ def predict(input_dict, prompt, cfg_scale, steps, seed):
         image_pil = new_image
     
     # 4. 处理 Mask (同样缩放 + Padding)
-    mask_layer = input_dict["layers"][0]
+    mask_layer = None
+    if input_dict.get("layers") and len(input_dict["layers"]) > 0:
+        mask_layer = input_dict["layers"][0]
+
     if mask_layer:
         alpha = mask_layer.split()[-1]
         # 如果缩放过，mask 也要缩放
-        if curr_pixels > max_pixels:
-            alpha = alpha.resize((inter_width, inter_height), Image.NEAREST)
+        alpha = alpha.resize((inter_width, inter_height), Image.NEAREST)
         raw_mask = Image.eval(alpha, lambda a: 255 if a > 0 else 0)
     else:
         raw_mask = Image.new("L", (inter_width, inter_height), 0)
@@ -191,4 +192,4 @@ with gr.Blocks(css=css) as demo:
     )
 
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", server_port=9999, share=True)
+    demo.launch(server_name="0.0.0.0", server_port=7999, share=True)
