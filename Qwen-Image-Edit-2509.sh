@@ -48,13 +48,12 @@ accelerate launch DiffSynth-Studio/examples/qwen_image/model_training/train.py \
   --trainable_models "ste" \
   --lora_target_modules "to_q,to_k,to_v,add_q_proj,add_k_proj,add_v_proj,to_out.0,to_add_out,img_mlp.net.2,img_mod.1,txt_mlp.net.2,txt_mod.1" \
   --lora_rank 512 \
-  --dataset_num_workers 8 \
+  --dataset_num_workers 2 \
   --wandb_project "${WANDB_PROJECT}" \
   --wandb_name "${WANDB_NAME}" \
   --find_unused_parameters \
   --task "sft:train" \
   --save_steps 1000 \
   --use_gradient_checkpointing \
-  --cfg_drop_prob 0.1 \
   --lora_checkpoint 'train/Qwen-Image-Edit-2509_lora-rank512-old/step-15000.safetensors' \
   --disable_epoch_resume

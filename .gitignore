@@ -12,3 +12,8 @@ test
 test-cfg4    
 bbox_stats.csv
 proxytext.sh
+compare
+*.log
+.gradio/
+comparison_grid/
+
