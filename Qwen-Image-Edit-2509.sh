@@ -31,7 +31,7 @@ OUTPUT_PATH="./train/Qwen-Image-Edit-2509_lora-rank512"
 #   --find_unused_parameters \
 #   --task "sft:data_process"
 
-# 阶段 2：加载缓存，只训练 DiT
+# 阶段 2：加载缓存，只训练 DiT (无STE对比实验，15k步自动停止)
 
 accelerate launch DiffSynth-Studio/examples/qwen_image/model_training/train.py \
   --dataset_base_path "$CACHE_PATH" \
@@ -42,18 +42,16 @@ accelerate launch DiffSynth-Studio/examples/qwen_image/model_training/train.py \
   --model_id_with_origin_paths "Qwen/Qwen-Image-Edit-2509:transformer/diffusion_pytorch_model*.safetensors" \
   --learning_rate 1 \
   --num_epochs 100 \
+  --max_steps 15000 \
   --remove_prefix_in_ckpt "pipe.dit." \
   --output_path "$OUTPUT_PATH" \
   --lora_base_model "dit" \
-  --trainable_models "ste" \
   --lora_target_modules "to_q,to_k,to_v,add_q_proj,add_k_proj,add_v_proj,to_out.0,to_add_out,img_mlp.net.2,img_mod.1,txt_mlp.net.2,txt_mod.1" \
   --lora_rank 512 \
   --dataset_num_workers 2 \
   --wandb_project "${WANDB_PROJECT}" \
   --wandb_name "${WANDB_NAME}" \
-  --find_unused_parameters \
   --task "sft:train" \
   --save_steps 1000 \
   --use_gradient_checkpointing \
-  --lora_checkpoint 'train/Qwen-Image-Edit-2509_lora-rank512-old/step-15000.safetensors' \
   --disable_epoch_resume
