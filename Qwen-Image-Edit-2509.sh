@@ -1,13 +1,13 @@
 #!/bin/bash
-export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-1,2,3,4}"
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-1,2,5,6}"
 export WANDB_PROJECT="${WANDB_PROJECT:-qwen-image}"
-export WANDB_NAME="${WANDB_NAME:-Qwen-Image-Edit-2509-root}"
+export WANDB_NAME="${WANDB_NAME:-Qwen-Image-Edit-2509-root-no-ste}"
 
 
 # 两阶段拆分训练：阶段 1 预处理缓存，阶段 2 正式训练
 
 CACHE_PATH="./data/Qwen-Image-Edit-2509_lora-rank512-split-cache"
-OUTPUT_PATH="./train/Qwen-Image-Edit-2509_lora-rank512"
+OUTPUT_PATH="./train/Qwen-Image-Edit-2509_lora-rank512-no-ste"
 
 # # 阶段 1：仅跑前处理（文本编码、VAE 等），生成缓存
 # accelerate launch DiffSynth-Studio/examples/qwen_image/model_training/train.py \
@@ -42,7 +42,7 @@ accelerate launch DiffSynth-Studio/examples/qwen_image/model_training/train.py \
   --model_id_with_origin_paths "Qwen/Qwen-Image-Edit-2509:transformer/diffusion_pytorch_model*.safetensors" \
   --learning_rate 1 \
   --num_epochs 100 \
-  --max_steps 15000 \
+  --max_steps 15050 \
   --remove_prefix_in_ckpt "pipe.dit." \
   --output_path "$OUTPUT_PATH" \
   --lora_base_model "dit" \
@@ -54,4 +54,4 @@ accelerate launch DiffSynth-Studio/examples/qwen_image/model_training/train.py \
   --task "sft:train" \
   --save_steps 1000 \
   --use_gradient_checkpointing \
-  --disable_epoch_resume
+  # --disable_epoch_resume
