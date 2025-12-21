@@ -1,5 +1,4 @@
 #!/bin/bash
-export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-1,2,5,6}"
 export WANDB_PROJECT="${WANDB_PROJECT:-qwen-image}"
 export WANDB_NAME="${WANDB_NAME:-Qwen-Image-Edit-2509-root-no-ste}"
 
@@ -54,4 +53,7 @@ accelerate launch DiffSynth-Studio/examples/qwen_image/model_training/train.py \
   --task "sft:train" \
   --save_steps 1000 \
   --use_gradient_checkpointing \
+  --find_unused_parameters \
   # --disable_epoch_resume
+
+
