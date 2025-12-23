@@ -75,7 +75,7 @@ def main():
     
     # Random selection with fixed seed
     random.seed(0)
-    selected_samples = random.sample(dataset, min(20, len(dataset)))
+    selected_samples = random.sample(dataset, min(24, len(dataset)))
     
     # Distribute samples: slicing with step = num_workers
     # Sample 0 goes to worker 0, Sample 1 to worker 1 ... Sample N to worker 0
@@ -123,7 +123,7 @@ def main():
     checkpoints = [
         {
             "path": repo_root / "train/Qwen-Image-Edit-2509_lora-rank512-no-ste/step-10000.safetensors",
-            "name": "10000"
+            "name": "woste-10000"
         },
     ]
 

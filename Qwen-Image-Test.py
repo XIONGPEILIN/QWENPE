@@ -81,7 +81,7 @@ def main():
     
     # Random selection with fixed seed
     random.seed(0)
-    selected_samples = random.sample(dataset, min(50, len(dataset)))
+    selected_samples = random.sample(dataset, min(24, len(dataset)))
     
     # Distribute samples: slicing with step = num_workers
     # Sample 0 goes to worker 0, Sample 1 to worker 1 ... Sample N to worker 0
@@ -120,7 +120,7 @@ def main():
                 ModelConfig(model_id="Qwen/Qwen-Image", origin_file_pattern="vae/diffusion_pytorch_model.safetensors", **vram_config),
             ],
             processor_config=ModelConfig(model_id="Qwen/Qwen-Image-Edit", origin_file_pattern="processor/"),
-            vram_limit=torch.cuda.mem_get_info(device)[1] / (1024 ** 3) - 0.5,
+            vram_limit=torch.cuda.mem_get_info(device)[1] / (1024 ** 3) - 5,
         )
     except Exception as e:
         print(f"[Worker {worker_id}] Failed to load pipeline: {e}")
@@ -128,13 +128,10 @@ def main():
 
     checkpoints = [
         {
-            "path": repo_root / "train/Qwen-Image-Edit-2509_lora-rank512-old/step-15000.safetensors",
-            "name": "old_15000"
-        },
-        {
-            "path": repo_root / "train/Qwen-Image-Edit-2509_lora-rank512/step-15000.safetensors",
-            "name": "new_15000"
+            "path": repo_root / "train/Qwen-Image-Edit-2509_lora-rank512-cfg/step-19000.safetensors",
+            "name": "ste-19000"
         }
+
     ]
 
     image_folder = "pico-banana-400k-subject_driven/openimages"

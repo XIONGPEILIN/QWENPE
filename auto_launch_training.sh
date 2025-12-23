@@ -2,8 +2,8 @@
 # filepath: auto_launch_training.sh
 
 # 配置
-CHECK_INTERVAL=10        # 检查间隔（秒）
-IDLE_THRESHOLD=60          # 空闲阈值（秒）
+CHECK_INTERVAL=1        # 检查间隔（秒）
+IDLE_THRESHOLD=1         # 空闲阈值（秒）
 MIN_MEMORY_MB=100          # 低于此显存(MB)认为空闲
 TARGET_GPUS=(1 2 3 4 5 6 7)  # 监控的GPU列表
 REQUIRED_GPUS=4            # 需要的空闲GPU数量

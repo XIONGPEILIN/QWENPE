@@ -15,7 +15,7 @@ for i in "${!GPU_IDS[@]}"; do
     echo "Launching Worker $WORKER_ID on GPU $GPU_ID..."
     
     # We run in background, redirecting logs to a file per worker
-    CUDA_VISIBLE_DEVICES=$GPU_ID python Qwen-Image-Test-woste.py \
+    CUDA_VISIBLE_DEVICES=$GPU_ID python Qwen-Image-Test.py \
         --worker_id $WORKER_ID \
         --num_workers $NUM_WORKERS \
         > "worker_${WORKER_ID}_gpu_${GPU_ID}.log" 2>&1 &
@@ -23,7 +23,7 @@ for i in "${!GPU_IDS[@]}"; do
     pids+=($!)
     
     # Sleep to avoid launch congestion
-    sleep 5
+    sleep 1
 done
 
 echo "All workers launched. Waiting for completion..."
