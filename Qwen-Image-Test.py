@@ -39,6 +39,7 @@ def load_ste_and_lora(pipe, ckpt_path: Path) -> Tuple[int, int]:
     """
     Load STE weights (prefix pipe.ste.) and LoRA tensors into DiT from a safetensors file.
     """
+    pipe.clear_lora()
     if not ckpt_path.exists():
         raise FileNotFoundError(f"Missing checkpoint: {ckpt_path}")
     
@@ -103,7 +104,7 @@ def main():
         "offload_dtype": "disk",
         "offload_device": "disk",
         "onload_dtype": torch.bfloat16,
-        "onload_device": "cpu",
+        "onload_device": device,
         "preparing_dtype": torch.bfloat16,
         "preparing_device": device,
         "computation_dtype": torch.bfloat16,
@@ -111,25 +112,35 @@ def main():
     }
 
     try:
+        # pipe = QwenImagePipeline.from_pretrained(
+        #     torch_dtype=torch.bfloat16,
+        #     device=device,
+        #     model_configs=[
+        #         ModelConfig(model_id="Qwen/Qwen-Image-Edit-2509", origin_file_pattern="transformer/diffusion_pytorch_model*.safetensors", **vram_config),
+        #         ModelConfig(model_id="Qwen/Qwen-Image", origin_file_pattern="text_encoder/model*.safetensors", **vram_config),
+        #         ModelConfig(model_id="Qwen/Qwen-Image", origin_file_pattern="vae/diffusion_pytorch_model.safetensors", **vram_config),
+        #     ],
+        #     processor_config=ModelConfig(model_id="Qwen/Qwen-Image-Edit", origin_file_pattern="processor/"),
+        #     vram_limit=torch.cuda.mem_get_info(device)[1] / (1024 ** 3) - 2,
+        # )
         pipe = QwenImagePipeline.from_pretrained(
-            torch_dtype=torch.bfloat16,
-            device=device,
-            model_configs=[
-                ModelConfig(model_id="Qwen/Qwen-Image-Edit-2509", origin_file_pattern="transformer/diffusion_pytorch_model*.safetensors", **vram_config),
-                ModelConfig(model_id="Qwen/Qwen-Image", origin_file_pattern="text_encoder/model*.safetensors", **vram_config),
-                ModelConfig(model_id="Qwen/Qwen-Image", origin_file_pattern="vae/diffusion_pytorch_model.safetensors", **vram_config),
-            ],
-            processor_config=ModelConfig(model_id="Qwen/Qwen-Image-Edit", origin_file_pattern="processor/"),
-            vram_limit=torch.cuda.mem_get_info(device)[1] / (1024 ** 3) - 5,
-        )
+                torch_dtype=torch.bfloat16,
+                device=device,
+                model_configs=[
+                    ModelConfig(model_id="Qwen/Qwen-Image-Edit-2509", origin_file_pattern="transformer/diffusion_pytorch_model*.safetensors"),
+                    ModelConfig(model_id="Qwen/Qwen-Image", origin_file_pattern="text_encoder/model*.safetensors"),
+                    ModelConfig(model_id="Qwen/Qwen-Image", origin_file_pattern="vae/diffusion_pytorch_model.safetensors"),
+                ],
+                processor_config=ModelConfig(model_id="Qwen/Qwen-Image-Edit", origin_file_pattern="processor/"),
+            )
     except Exception as e:
         print(f"[Worker {worker_id}] Failed to load pipeline: {e}")
         return
 
     checkpoints = [
         {
-            "path": repo_root / "train/Qwen-Image-Edit-2509_lora-rank512-cfg/step-19000.safetensors",
-            "name": "ste-19000"
+            "path": repo_root / "train/Qwen-Image-Edit-2509_lora-rank512-cfg/step-30000.safetensors",
+            "name": "ste-30000"
         }
 
     ]
@@ -165,7 +176,9 @@ def main():
                 sample_dir = repo_root / "compare" / ckpt_name / str(global_idx)
                 sample_dir.mkdir(parents=True, exist_ok=True)
 
-                # Save debug images
+                # Save debug images and sample JSON
+                with open(sample_dir / "sample.json", "w", encoding="utf-8") as f:
+                    json.dump(sample, f, indent=4, ensure_ascii=False)
                 edit_images[0].save(sample_dir / "debug_edit_image.png")
                 target_image.save(sample_dir / "target_image.png")
                 back_mask.save(sample_dir / "back_mask.png")
@@ -179,6 +192,7 @@ def main():
                     num_inference_steps=50,
                     cfg_scale=1.0,
                     seed=0,
+                    inpaint_blend_alpha = 0,
                 )
 
                 image.save(sample_dir / "output.png")

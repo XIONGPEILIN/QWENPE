@@ -18,7 +18,7 @@ for i in "${!GPU_IDS[@]}"; do
     CUDA_VISIBLE_DEVICES=$GPU_ID python Qwen-Image-Test.py \
         --worker_id $WORKER_ID \
         --num_workers $NUM_WORKERS \
-        > "worker_${WORKER_ID}_gpu_${GPU_ID}.log" 2>&1 &
+        > "wk_${WORKER_ID}_gpu_${GPU_ID}.log" 2>&1 &
     
     pids+=($!)
     
@@ -35,3 +35,4 @@ for pid in "${pids[@]}"; do
 done
 
 echo "All tasks finished."
+

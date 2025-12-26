@@ -114,7 +114,7 @@ def main():
                 ModelConfig(model_id="Qwen/Qwen-Image", origin_file_pattern="vae/diffusion_pytorch_model.safetensors", **vram_config),
             ],
             processor_config=ModelConfig(model_id="Qwen/Qwen-Image-Edit", origin_file_pattern="processor/"),
-            vram_limit=torch.cuda.mem_get_info(device)[1] / (1024 ** 3) - 5,
+            vram_limit=torch.cuda.mem_get_info(device)[1] / (1024 ** 3) - 2,
         )
     except Exception as e:
         print(f"[Worker {worker_id}] Failed to load pipeline: {e}")

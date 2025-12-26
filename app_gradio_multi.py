@@ -56,7 +56,7 @@ print("Initializing Pipeline...")
 # 使用指定的模型配置
 pipe = QwenImagePipeline.from_pretrained(
     torch_dtype=torch.bfloat16,
-    device="cuda:7",
+    device="cuda:6",
     model_configs=[
         ModelConfig(model_id="Qwen/Qwen-Image-Edit-2509", origin_file_pattern="transformer/diffusion_pytorch_model*.safetensors"),
         ModelConfig(model_id="Qwen/Qwen-Image", origin_file_pattern="text_encoder/model*.safetensors"),
@@ -65,82 +65,97 @@ pipe = QwenImagePipeline.from_pretrained(
     processor_config=ModelConfig(model_id="Qwen/Qwen-Image-Edit", origin_file_pattern="processor/"),
 )
 
-# 加载 14000 step 的 LoRA
-# 假设是 'new' 文件夹下的 (即当前训练的主目录)
-lora_path = repo_root / "train/Qwen-Image-Edit-2509_lora-rank512/step-14000.safetensors"
-if not lora_path.exists():
-    # 如果找不到，尝试一下 old 目录，或者报错
-    print(f"Warning: {lora_path} not found. Checking 'old' directory...")
-    lora_path_old = repo_root / "train/Qwen-Image-Edit-2509_lora-rank512-cfg/step-18000.safetensors"
-    if lora_path_old.exists():
-        lora_path = lora_path_old
-    else:
-        raise FileNotFoundError("Could not find step-14000.safetensors in either train directory.")
+lora_path = repo_root / "train/Qwen-Image-Edit-2509_lora-rank512-cfg/step-30000.safetensors"
 
 load_ste_and_lora(pipe, lora_path)
+
+def preprocess_image(image_pil, max_pixels=1048576):
+    orig_width, orig_height = image_pil.size
+    curr_pixels = orig_width * orig_height
+
+    # Always resize to match max_pixels approx, whether scaling up or down
+    factor = (max_pixels / curr_pixels) ** 0.5
+    inter_width = int(orig_width * factor)
+    inter_height = int(orig_height * factor)
+    print(f"Scaling from {orig_width}x{orig_height} to {inter_width}x{inter_height}")
+    image_pil = image_pil.resize((inter_width, inter_height), Image.LANCZOS)
+
+    # Align to 16 pixels
+    target_width = ((inter_width + 15) // 16) * 16
+    target_height = ((inter_height + 15) // 16) * 16
+    
+    if target_width != inter_width or target_height != inter_height:
+        print(f"Padding to {target_width}x{target_height}")
+        new_image = Image.new("RGB", (target_width, target_height), (0, 0, 0))
+        new_image.paste(image_pil, (0, 0))
+        image_pil = new_image
+    
+    return image_pil, inter_width, inter_height, target_width, target_height
 
 # -----------------------------------------------------------------------------
 # 3. 推理函数
 # -----------------------------------------------------------------------------
-def predict(input_dict, prompt, cfg_scale, steps, seed, inpaint_blend_alpha):
+def predict(input_dict, input_image2, input_mask, prompt, cfg_scale, steps, seed, inpaint_blend_alpha, progress=gr.Progress(track_tqdm=True)):
     """
     input_dict: Gradio Image editor return (contains 'image' and 'mask')
+    input_image2: Optional second image for dual-input editing
+    input_mask: Optional uploaded mask image
     """
     if input_dict is None:
         return None
     
     image_pil = input_dict["background"].convert("RGB")
-    orig_width, orig_height = image_pil.size
+    image_pil, inter_width, inter_height, target_width, target_height = preprocess_image(image_pil)
     
-    # 1. 等比例缩放以符合 max_pixels (1048576)
-    max_pixels = 1048576
-    curr_pixels = orig_width * orig_height
-
-    factor = (max_pixels / curr_pixels) ** 0.5
-    inter_width = int(orig_width * factor)
-    inter_height = int(orig_height * factor)
-    print(f"Scaling down from {orig_width}x{orig_height} to {inter_width}x{inter_height}")
-    image_pil = image_pil.resize((inter_width, inter_height), Image.LANCZOS)
-
-
-    # 2. 计算 16 的倍数目标尺寸
-    target_width = ((inter_width + 15) // 16) * 16
-    target_height = ((inter_height + 15) // 16) * 16
-    
-    # 3. 执行 Padding
-    if target_width != inter_width or target_height != inter_height:
-        print(f"Padding from {inter_width}x{inter_height} to {target_width}x{target_height}")
-        new_image = Image.new("RGB", (target_width, target_height), (0, 0, 0))
-        new_image.paste(image_pil, (0, 0))
-        image_pil = new_image
-    
-    # 4. 处理 Mask (同样缩放 + Padding)
-    mask_layer = None
-    if input_dict.get("layers") and len(input_dict["layers"]) > 0:
-        mask_layer = input_dict["layers"][0]
-
-    if mask_layer:
-        alpha = mask_layer.split()[-1]
-        # 如果缩放过，mask 也要缩放
-        alpha = alpha.resize((inter_width, inter_height), Image.NEAREST)
-        raw_mask = Image.eval(alpha, lambda a: 255 if a > 0 else 0)
+    # 处理 Mask
+    if input_mask is not None:
+        # 提取 Mask：支持 Alpha 通道或黑白灰度
+        if input_mask.mode in ('RGBA', 'LA') or (input_mask.mode == 'P' and 'transparency' in input_mask.info):
+            alpha = input_mask.convert('RGBA').split()[-1]
+            # 如果 Alpha 通道包含透明信息（非全不透明）
+            if alpha.getextrema() != (255, 255):
+                # 逻辑反转：Alpha < 255 (透明/半透明) -> Mask=255 (修改)
+                #           Alpha = 255 (不透明) -> Mask=0 (不修改)
+                raw_mask = alpha.point(lambda p: 255 if p < 255 else 0).resize((inter_width, inter_height), Image.NEAREST)
+            else:
+                # 全不透明，按普通灰度处理 (白色=修改)
+                raw_mask = input_mask.convert("L").resize((inter_width, inter_height), Image.NEAREST)
+        else:
+            raw_mask = input_mask.convert("L").resize((inter_width, inter_height), Image.NEAREST)
     else:
-        raw_mask = Image.new("L", (inter_width, inter_height), 0)
+        # 处理在编辑器中涂抹的 Mask
+        mask_layer = None
+        if input_dict.get("layers") and len(input_dict["layers"]) > 0:
+            mask_layer = input_dict["layers"][0]
 
-    # Padding mask
+        if mask_layer:
+            alpha = mask_layer.split()[-1]
+            alpha = alpha.resize((inter_width, inter_height), Image.NEAREST)
+            raw_mask = Image.eval(alpha, lambda a: 255 if a > 0 else 0)
+        else:
+            raw_mask = Image.new("L", (inter_width, inter_height), 0)
+
+    # 对 Mask 进行与主图相同的 Padding
     if target_width != inter_width or target_height != inter_height:
         back_mask = Image.new("L", (target_width, target_height), 0)
         back_mask.paste(raw_mask, (0, 0))
     else:
         back_mask = raw_mask
 
-    width, height = image_pil.size
+    # 处理第二张图片
+    edit_images = [image_pil]
+    if input_image2 is not None:
+        image2_processed, _, _, _, _ = preprocess_image(input_image2.convert("RGB"))
+        edit_images.append(image2_processed)
+
+    width, height = target_width, target_height
     prompt = "Picture 1 is the image to modify. " + prompt
     print(f"Processing: Prompt='{prompt}', Final Size={width}x{height}, Seed={seed}")
 
     output_image, sub_image = pipe(
         prompt=prompt,
-        edit_image=[image_pil], # Pipeline expects a list
+        edit_image=edit_images, # Pipeline expects a list
+        edit_image_auto_resize=False,
         back_mask=back_mask,
         height=height,
         width=width,
@@ -173,7 +188,10 @@ with gr.Blocks(css=css) as demo:
                     brush=gr.Brush(colors=["#000000"], color_mode="fixed"), # 只是视觉上的画笔
                     eraser=gr.Eraser(),
                     layers=False, # 简化的编辑器
+                    height=600,
                 )
+                input_image2 = gr.Image(label="Reference Image (Optional)", type="pil")
+                input_mask = gr.Image(label="Upload Mask (Optional)", type="pil", image_mode="RGBA")
                 prompt = gr.Textbox(label="Prompt", placeholder="Describe the edit (e.g. 'Make the banana red')")
                 
                 with gr.Accordion("Advanced Settings", open=False):
@@ -190,9 +208,9 @@ with gr.Blocks(css=css) as demo:
 
     run_btn.click(
         fn=predict,
-        inputs=[input_image, prompt, cfg_scale, steps, seed, inpaint_blend_alpha],
+        inputs=[input_image, input_image2, input_mask, prompt, cfg_scale, steps, seed, inpaint_blend_alpha],
         outputs=[result_main, result_sub]
     )
 
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", server_port=7999, share=True)
+    demo.queue().launch(server_name="0.0.0.0", server_port=7999, share=True)
