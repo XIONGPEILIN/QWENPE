@@ -17,6 +17,9 @@ compare
 .gradio/
 comparison_grid/
 
-magicbrash.tar.gz
 
-magicbrash
+
+
+magicbrash/flux_results/
+magicbrash/qwen_results/
+magicbrash/qwen_results_test/

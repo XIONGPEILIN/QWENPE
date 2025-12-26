@@ -16,9 +16,10 @@ from torchvision.transforms import InterpolationMode
 # 配置路径
 BASE_DIR = "pico-banana-400k-subject_driven"
 AUDIT_DIR = os.path.join(BASE_DIR, "openimages/dino_mask_audit_1")
-OUTPUT_JSON = "dataset_qwen_pe_all.json"
-REF_GT_DIR = os.path.join(BASE_DIR, "openimages/ref_gt_generated_all")
+OUTPUT_JSON = "dataset_qwen_pe_full.json"
+REF_GT_DIR = os.path.join(BASE_DIR, "openimages/ref_gt_generated_full")
 EDIT_ALIGNED_DIR = os.path.join(BASE_DIR, "openimages/edit_aligned_all")
+OLD_MASK_DIR = os.path.join(BASE_DIR, "openimages/ref_gt_generated_all")
 
 # 确保输出目录存在
 os.makedirs(REF_GT_DIR, exist_ok=True)
@@ -87,14 +88,6 @@ def process_one_file(audit_file):
         with open(audit_file, 'r') as f:
             audit_data = json.load(f)
         
-        results = audit_data.get("results", {})
-        global_res = results.get("global", {})
-        
-        # 1. 筛选 background_bbox_sim > 0.9
-        bg_sim = global_res.get("background_bbox_sim", 0)
-        if bg_sim < 0.9:
-            return None
-
         # Load Log
         log_rel_path = audit_data.get("log_path")
         if not log_rel_path: return None
@@ -104,126 +97,50 @@ def process_one_file(audit_file):
         with open(log_full_path, 'r') as f:
             log_data = json.load(f)
 
+        item_idx = audit_data.get("item_idx")
         bg_rel_path = log_data.get("original_item", {}).get("local_input_image")
         edit_rel_path = log_data.get("original_item", {}).get("output_image")
         if not bg_rel_path or not edit_rel_path: return None
         
         edit_full = os.path.join(BASE_DIR, edit_rel_path)
         if not os.path.exists(edit_full): return None
-        
-        with Image.open(edit_full) as img:
-            img_size = img.size # (W, H)
-        
-        # Load source image (edit_image) for alignment
         bg_full = os.path.join(BASE_DIR, bg_rel_path)
-        if not os.path.exists(bg_full):
-            return None
+        if not os.path.exists(bg_full): return None
 
-        # 2. Accumulate Masks (Precise Only)
-        precise_accum = None
+        # Try to load existing mask from OLD_MASK_DIR
+        old_mask_filename = f"mask_combined_{item_idx}.png"
+        old_mask_path = os.path.join(OLD_MASK_DIR, old_mask_filename)
         
-        for kind in ["add", "remove"]:
-            kind_res = results.get(kind, {})
-            sub_results = kind_res.get("sub_mask_results", [])
-            has_valid_subs = False
-            
-            # Try sub-masks
-            for sub in sub_results:
-                if sub.get("cos_sim", 0) < 0.9: # MODIFIED
-                    mask_rel = sub.get("mask_path")
-                    if mask_rel:
-                        mask_full = os.path.join(BASE_DIR, mask_rel)
-                        if os.path.exists(mask_full):
-                            t = _load_mask_tensor(mask_full, size=img_size)
-                            if t is not None:
-                                has_valid_subs = True
-                                if precise_accum is None: precise_accum = t
-                                else: precise_accum = torch.max(precise_accum, t)
-            
-            # Fallback to Merged Mask
-            if not has_valid_subs:
-                merged_rel = global_res.get(f"{kind}_mask_path") or kind_res.get("kind_merged_mask_path")
-                if merged_rel:
-                    merged_full = os.path.join(BASE_DIR, merged_rel)
-                    if os.path.exists(merged_full):
-                        t = _load_mask_tensor(merged_full, size=img_size)
-                        if t is not None:
-                            if precise_accum is None: precise_accum = t
-                            else: precise_accum = torch.max(precise_accum, t)
+        if not os.path.exists(old_mask_path):
+            return None # Skip if no pre-generated mask
 
-        if precise_accum is None:
-            return None
-
-        # 3. Resize image/mask to training-time resolution (16 对齐 & 1M 像素限制)
-        tgt_w, tgt_h = _compute_target_size(img_size[0], img_size[1])
-        if tgt_w == 0 or tgt_h == 0:
-            return None
-        precise_accum = _resize_mask_like_operator(precise_accum, tgt_w, tgt_h)
-
-        # 4. Extract BBox from precise_accum (Aligned to 16)
-        pts = torch.nonzero(precise_accum[0, 0] > 0.5, as_tuple=True)
-        if len(pts[0]) == 0: return None
+        # Load Full Precise Mask
+        full_mask_pil = Image.open(old_mask_path).convert("L")
+        tgt_w, tgt_h = full_mask_pil.size
         
-        y_min, y_max = pts[0].min().item(), pts[0].max().item()
-        x_min, x_max = pts[1].min().item(), pts[1].max().item()
-        
-        # Align to 16
-        patch_size = 16
-        y_min = (y_min // patch_size) * patch_size
-        x_min = (x_min // patch_size) * patch_size
-        # Add patch_size before div to ceil, then sub 1? 
-        # Verify script logic: ((y_max + patch_size) // patch_size) * patch_size - 1
-        # This makes sure the box covers y_max and ends on a grid boundary - 1.
-        # But PIL crop is exclusive for the second coordinate.
-        # So we want the boundary itself.
-        
-        y_max_bound = ((y_max + patch_size) // patch_size) * patch_size
-        x_max_bound = ((x_max + patch_size) // patch_size) * patch_size
-        
-        # Clip to image size
-        H, W = precise_accum.shape[-2:]
-        y_min = max(0, y_min)
-        x_min = max(0, x_min)
-        y_max_bound = min(H, y_max_bound)
-        x_max_bound = min(W, x_max_bound)
-        
-        crop_box = (x_min, y_min, x_max_bound, y_max_bound)
-        
-        # 5. Generate Ref GT, Final Mask, and aligned edit_image
-        item_idx = audit_data.get("item_idx")
+        # 5. Generate Ref GT, and aligned edit_image
         ref_gt_filename = f"ref_gt_{item_idx}.png"
         ref_gt_full_path = os.path.join(REF_GT_DIR, ref_gt_filename)
-        new_mask_filename = f"mask_combined_{item_idx}.png"
-        new_mask_full_path = os.path.join(REF_GT_DIR, new_mask_filename)
         aligned_edit_filename = f"edit_aligned_{item_idx}.png"
         aligned_edit_full_path = os.path.join(EDIT_ALIGNED_DIR, aligned_edit_filename)
 
-        # Save aligned edit_image (source) using LANCZOS
+        # Save aligned edit_image (source) using LANCZOS (Reuse if exists, else regenerate)
+        # Note: If reusing, we assume it matches tgt_w, tgt_h.
         if not os.path.exists(aligned_edit_full_path):
-            with Image.open(bg_full).convert("RGB") as bg_img:
+             with Image.open(bg_full).convert("RGB") as bg_img:
                 bg_resized = _resize_pil_lanczos(bg_img, tgt_w, tgt_h)
                 bg_resized.save(aligned_edit_full_path)
         
         if not os.path.exists(ref_gt_full_path):
             edit_img = Image.open(edit_full).convert("RGB")
+            # Resize edit_image to match mask size
             edit_img = _resize_pil_like_operator(edit_img, tgt_w, tgt_h)
             
-            # Crop Image
-            gt_crop = edit_img.crop(crop_box)
-            
-            # Crop Precise Mask
-            mask_slice = precise_accum[0, 0, y_min:y_max_bound, x_min:x_max_bound]
-            mask_crop_pil = transforms.ToPILImage()(mask_slice.cpu()).convert("L")
-            
-            # Apply Mask
+            # Apply Mask to FULL image
             # Use white background so transparent areas are white instead of black
-            ref_gt_img = Image.new("RGB", gt_crop.size, (255, 255, 255))
-            ref_gt_img.paste(gt_crop, (0, 0), mask=mask_crop_pil)
+            ref_gt_img = Image.new("RGB", edit_img.size, (255, 255, 255))
+            ref_gt_img.paste(edit_img, (0, 0), mask=full_mask_pil)
             ref_gt_img.save(ref_gt_full_path)
-            
-            # Save Full Precise Mask
-            full_mask_pil = transforms.ToPILImage()(precise_accum[0].cpu()).convert("L")
-            full_mask_pil.save(new_mask_full_path)
 
         # 6. Construct Entry
         original_text = log_data.get("original_item", {}).get("text", "")
@@ -236,14 +153,14 @@ def process_one_file(audit_file):
         edit_rel_path = os.path.relpath(edit_full, REL_ROOT)
         aligned_edit_rel_path = os.path.relpath(aligned_edit_full_path, REL_ROOT)
         ref_gt_rel_path = os.path.relpath(ref_gt_full_path, REL_ROOT)
-        final_mask_rel_path = os.path.relpath(new_mask_full_path, REL_ROOT)
+        # final_mask_rel_path = os.path.relpath(new_mask_full_path, REL_ROOT)
 
         return {
             "prompt": prompt,
             "image": edit_rel_path,        # GT
             "edit_image": [aligned_edit_rel_path],   # Source (aligned to target resolution)
             "ref_gt": ref_gt_rel_path,
-            "back_mask": final_mask_rel_path
+            # "back_mask": final_mask_rel_path
         }
 
     except Exception as e:
@@ -254,10 +171,13 @@ def main():
     # audit_files = audit_files[:1000]  # limit for quick test run
     print(f"Found {len(audit_files)} audit files. Processing with {cpu_count()} CPUs...")
 
-    # 清空并重建对齐后的 edit_image 输出目录，避免旧文件残留
-    if os.path.exists(EDIT_ALIGNED_DIR):
-        shutil.rmtree(EDIT_ALIGNED_DIR)
+    # 确保输出目录存在
     os.makedirs(EDIT_ALIGNED_DIR, exist_ok=True)
+
+    # 清空并重建 ref_gt 输出目录，确保重新生成全图尺寸
+    if os.path.exists(REF_GT_DIR):
+        shutil.rmtree(REF_GT_DIR)
+    os.makedirs(REF_GT_DIR, exist_ok=True)
     
     # Use CPU by default for stability with multiprocessing
     with Pool(processes=8) as pool:
