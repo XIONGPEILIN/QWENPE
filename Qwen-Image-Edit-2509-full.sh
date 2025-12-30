@@ -38,9 +38,8 @@ accelerate launch DiffSynth-Studio/examples/qwen_image/model_training/train.py \
   --max_pixels 1048576 \
   --dataset_repeat 1 \
   --model_id_with_origin_paths "Qwen/Qwen-Image-Edit-2509:transformer/diffusion_pytorch_model*.safetensors" \
-  --lora_checkpoint "train/Qwen-Image-Edit-2509_lora-rank512-cfg/step-30000.safetensors" \
   --learning_rate 1 \
-  --num_epochs 5 \
+  --num_epochs 10 \
   --remove_prefix_in_ckpt "pipe.dit." \
   --output_path "$OUTPUT_PATH" \
   --lora_base_model "dit" \
@@ -56,5 +55,5 @@ accelerate launch DiffSynth-Studio/examples/qwen_image/model_training/train.py \
   --use_gradient_checkpointing \
   --cfg_drop_prob 0.1 \
   --d0 1e-5 \
-  --gradient_accumulation_steps 8 \
+  --gradient_accumulation_steps 16 \
   --disable_epoch_resume

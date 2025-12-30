@@ -23,3 +23,8 @@ comparison_grid/
 magicbrash/flux_results/
 magicbrash/qwen_results/
 magicbrash/qwen_results_test/
+magicbrash/qwen_results_test copy/
+magicbrash/fluxfill_results_test/
+editbench_data
+magicbrash/
+tmp/

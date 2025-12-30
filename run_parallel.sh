@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Target GPUs (Avoiding 1 and 5)
-GPU_IDS=(0 1 2 3 4 5 6 7)
+GPU_IDS=(1 2 3 4 5 6 7 0)
 NUM_WORKERS=${#GPU_IDS[@]}
 
 echo "Starting $NUM_WORKERS workers on GPUs: ${GPU_IDS[*]}"

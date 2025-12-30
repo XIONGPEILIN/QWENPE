@@ -139,8 +139,8 @@ def main():
 
     checkpoints = [
         {
-            "path": repo_root / "train/Qwen-Image-Edit-2509_lora-rank512-cfg/step-30000.safetensors",
-            "name": "ste-30000"
+            "path": repo_root / "train/Qwen-Image-Edit-2509_lora-rank512-cfg/step-29000.safetensors",
+            "name": "ste-cfg4-29000"
         }
 
     ]
@@ -181,7 +181,7 @@ def main():
                     json.dump(sample, f, indent=4, ensure_ascii=False)
                 edit_images[0].save(sample_dir / "debug_edit_image.png")
                 target_image.save(sample_dir / "target_image.png")
-                back_mask.save(sample_dir / "back_mask.png")
+                # back_mask.save(sample_dir / "back_mask.png")
 
                 image, sub_image = pipe(
                     prompt=sample["prompt"],
@@ -190,7 +190,7 @@ def main():
                     height=height,
                     width=width,
                     num_inference_steps=50,
-                    cfg_scale=1.0,
+                    cfg_scale=4.0,
                     seed=0,
                     inpaint_blend_alpha = 0,
                 )
