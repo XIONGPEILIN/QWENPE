@@ -29,9 +29,9 @@ accelerate launch DiffSynth-Studio/examples/qwen_image/model_training/train.py \
   --wandb_name "${WANDB_NAME}" \
   --find_unused_parameters \
   --task "sft:train" \
-  --save_steps 5000 \
+  --save_steps 1000 \
   --use_gradient_checkpointing \
   --cfg_drop_prob 0.1 \
   --disable_epoch_resume \
-  --gradient_accumulation_steps 32 \
+  --gradient_accumulation_steps 16 \
   --zero_cond_t

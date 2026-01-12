@@ -5,9 +5,9 @@
 CHECK_INTERVAL=1        # 检查间隔（秒）
 IDLE_THRESHOLD=1         # 空闲阈值（秒）
 MIN_MEMORY_MB=100          # 低于此显存(MB)认为空闲
-TARGET_GPUS=(1 2 3 4 5 6 7)  # 监控的GPU列表
-REQUIRED_GPUS=6           # 需要的空闲GPU数量
-TRAINING_SCRIPT="Qwen-Image-Edit-2509-full.sh"
+TARGET_GPUS=(1 2 3 4 5)  # 监控的GPU列表
+REQUIRED_GPUS=5           # 需要的空闲GPU数量
+TRAINING_SCRIPT="Qwen-Image-Edit-2511-NoSTE.sh"
 
 # 记录每个GPU开始空闲的时间
 declare -A idle_start_time

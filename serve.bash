@@ -1,0 +1,2 @@
+GPU_MEM_UTIL=0.84 
+CUDA_VISIBLE_DEVICES="0" vllm serve Qwen/Qwen3-VL-32B-Instruct-FP8  --gpu-memory-utilization "$GPU_MEM_UTIL" --max-model-len 85000 --data-parallel-size 1   --limit-mm-per-prompt.video 0 --port 7512

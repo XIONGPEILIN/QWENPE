@@ -10,11 +10,11 @@ from PIL import Image
 import torch
 from safetensors.torch import load_file
 
-REPO_ROOT_SENTINEL = "dataset_qwen_pe_all.json"
+REPO_ROOT_SENTINEL = "dataset_qwen_pe_top1000.json"
 
 
 def find_repo_root(start: Path) -> Path:
-    """Walk upwards until dataset_qwen_pe_all.json is found."""
+    """Walk upwards until json is found."""
     cur = start
     for _ in range(10):
         if (cur / REPO_ROOT_SENTINEL).exists():
@@ -76,12 +76,12 @@ def main():
     from diffsynth.pipelines.qwen_image import QwenImagePipeline, ModelConfig
 
     # Load dataset
-    dataset_path = repo_root / "dataset_qwen_pe_all.json"
+    dataset_path = repo_root / REPO_ROOT_SENTINEL
     with open(dataset_path, "r") as f:
         dataset = json.load(f)
     
     # Random selection with fixed seed
-    random.seed(0)
+    random.seed(666)
     selected_samples = random.sample(dataset, min(24, len(dataset)))
     
     # Distribute samples: slicing with step = num_workers
@@ -104,7 +104,7 @@ def main():
         "offload_dtype": "disk",
         "offload_device": "disk",
         "onload_dtype": torch.bfloat16,
-        "onload_device": device,
+        "onload_device": "cpu",
         "preparing_dtype": torch.bfloat16,
         "preparing_device": device,
         "computation_dtype": torch.bfloat16,
@@ -116,18 +116,18 @@ def main():
         #     torch_dtype=torch.bfloat16,
         #     device=device,
         #     model_configs=[
-        #         ModelConfig(model_id="Qwen/Qwen-Image-Edit-2509", origin_file_pattern="transformer/diffusion_pytorch_model*.safetensors", **vram_config),
+        #         ModelConfig(model_id="Qwen/Qwen-Image-Edit-2511", origin_file_pattern="transformer/diffusion_pytorch_model*.safetensors", **vram_config),
         #         ModelConfig(model_id="Qwen/Qwen-Image", origin_file_pattern="text_encoder/model*.safetensors", **vram_config),
         #         ModelConfig(model_id="Qwen/Qwen-Image", origin_file_pattern="vae/diffusion_pytorch_model.safetensors", **vram_config),
         #     ],
         #     processor_config=ModelConfig(model_id="Qwen/Qwen-Image-Edit", origin_file_pattern="processor/"),
-        #     vram_limit=torch.cuda.mem_get_info(device)[1] / (1024 ** 3) - 2,
+        #     vram_limit=torch.cuda.mem_get_info(device)[1] / (1024 ** 3) - 4,
         # )
         pipe = QwenImagePipeline.from_pretrained(
                 torch_dtype=torch.bfloat16,
                 device=device,
                 model_configs=[
-                    ModelConfig(model_id="Qwen/Qwen-Image-Edit-2509", origin_file_pattern="transformer/diffusion_pytorch_model*.safetensors"),
+                    ModelConfig(model_id="Qwen/Qwen-Image-Edit-2511", origin_file_pattern="transformer/diffusion_pytorch_model*.safetensors"),
                     ModelConfig(model_id="Qwen/Qwen-Image", origin_file_pattern="text_encoder/model*.safetensors"),
                     ModelConfig(model_id="Qwen/Qwen-Image", origin_file_pattern="vae/diffusion_pytorch_model.safetensors"),
                 ],
@@ -139,8 +139,8 @@ def main():
 
     checkpoints = [
         {
-            "path": repo_root / "train/Qwen-Image-Edit-2509_lora-rank512-cfg/step-29000.safetensors",
-            "name": "ste-cfg4-29000"
+            "path": repo_root / "train/Qwen-Image-Edit-2511_lora-rank512-cfg/step-28000.safetensors",
+            "name": "2011-ste-28000"
         }
 
     ]
@@ -172,31 +172,39 @@ def main():
 
                 width, height = target_image.size
 
-                # Create sample directory
-                sample_dir = repo_root / "compare" / ckpt_name / str(global_idx)
-                sample_dir.mkdir(parents=True, exist_ok=True)
+                cfgs = [1.0, 2.0, 4.0]
+                alphas = [0.0, 0.1, 0.4, 0.7, 1.0]
 
-                # Save debug images and sample JSON
-                with open(sample_dir / "sample.json", "w", encoding="utf-8") as f:
-                    json.dump(sample, f, indent=4, ensure_ascii=False)
-                edit_images[0].save(sample_dir / "debug_edit_image.png")
-                target_image.save(sample_dir / "target_image.png")
-                # back_mask.save(sample_dir / "back_mask.png")
+                for cfg in cfgs:
+                    for alpha in alphas:
+                        print(f"[Worker {worker_id}] Processing sample {global_idx} (CFG: {cfg}, Alpha: {alpha})")
+                        
+                        # Create sample directory per Grid Point
+                        sample_dir = repo_root / "compare" / "grid_search" / f"{ckpt_name}_cfg{int(cfg)}_alpha{alpha}" / str(global_idx)
+                        sample_dir.mkdir(parents=True, exist_ok=True)
 
-                image, sub_image = pipe(
-                    prompt=sample["prompt"],
-                    edit_image=edit_images,
-                    back_mask=back_mask,
-                    height=height,
-                    width=width,
-                    num_inference_steps=50,
-                    cfg_scale=4.0,
-                    seed=0,
-                    inpaint_blend_alpha = 0,
-                )
+                        # Save debug images and sample JSON
+                        with open(sample_dir / "sample.json", "w", encoding="utf-8") as f:
+                            json.dump(sample, f, indent=4, ensure_ascii=False)
+                        edit_images[0].save(sample_dir / "debug_edit_image.png")
+                        target_image.save(sample_dir / "target_image.png")
+                        back_mask.save(sample_dir / "back_mask.png")
 
-                image.save(sample_dir / "output.png")
-                sub_image.save(sample_dir / "output_sub.png")
+                        image, sub_image = pipe(
+                            prompt=sample["prompt"],
+                            edit_image=edit_images,
+                            back_mask=back_mask,
+                            height=height,
+                            width=width,
+                            num_inference_steps=50,
+                            cfg_scale=cfg,
+                            seed=42,
+                            inpaint_blend_alpha=alpha,
+                            use_bbox_mask=True,
+                        )
+
+                        image.save(sample_dir / "output.png")
+                        sub_image.save(sample_dir / "output_sub.png")
 
             except Exception as e:
                 print(f"[Worker {worker_id}] Error processing sample {global_idx}: {e}")

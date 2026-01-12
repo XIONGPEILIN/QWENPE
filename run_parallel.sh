@@ -1,38 +1,39 @@
 #!/bin/bash
 
-# Target GPUs (Avoiding 1 and 5)
-GPU_IDS=(1 2 3 4 5 6 7 0)
-NUM_WORKERS=${#GPU_IDS[@]}
+# Configuration
+SCRIPT="Qwen-Image-Test-LBM.py"
+NUM_WORKERS=8
+GPU_IDS=(0 1 2 3 4 5 6 7)  # Array of GPU IDs to use
+LOG_DIR="logs"
+
+# Create log directory
+mkdir -p "$LOG_DIR"
 
 echo "Starting $NUM_WORKERS workers on GPUs: ${GPU_IDS[*]}"
+echo "Script: $SCRIPT"
+echo "Logs will be saved to: $LOG_DIR"
 
-pids=()
-
-for i in "${!GPU_IDS[@]}"; do
-    GPU_ID=${GPU_IDS[$i]}
-    WORKER_ID=$i
+# Launch workers
+for ((i=0; i<NUM_WORKERS; i++)); do
+    gpu_idx=$((i % ${#GPU_IDS[@]}))
+    gpu_id=${GPU_IDS[$gpu_idx]}
     
-    echo "Launching Worker $WORKER_ID on GPU $GPU_ID..."
+    echo "Launching worker $i on GPU $gpu_id..."
     
-    # We run in background, redirecting logs to a file per worker
-    CUDA_VISIBLE_DEVICES=$GPU_ID python Qwen-Image-Test.py \
-        --worker_id $WORKER_ID \
-        --num_workers $NUM_WORKERS \
-        > "wk_${WORKER_ID}_gpu_${GPU_ID}.log" 2>&1 &
-    
-    pids+=($!)
-    
-    # Sleep to avoid launch congestion
-    sleep 1
+    CUDA_VISIBLE_DEVICES=$gpu_id python "$SCRIPT" \
+        --worker_id "$i" \
+        --num_workers "$NUM_WORKERS" \
+        > "$LOG_DIR/worker_$i.log" 2>&1 &
+        
+    pids[$i]=$!
 done
 
 echo "All workers launched. Waiting for completion..."
-echo "You can check progress with: tail -f worker_*.log"
 
 # Wait for all background processes
-for pid in "${pids[@]}"; do
+for pid in ${pids[*]}; do
     wait $pid
 done
 
-echo "All tasks finished."
+echo "All workers finished."
 

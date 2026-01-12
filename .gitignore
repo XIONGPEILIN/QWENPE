@@ -17,9 +17,6 @@ compare
 .gradio/
 comparison_grid/
 
-
-
-
 magicbrash/flux_results/
 magicbrash/qwen_results/
 magicbrash/qwen_results_test/
@@ -28,3 +25,23 @@ magicbrash/fluxfill_results_test/
 editbench_data
 magicbrash/
 tmp/
+flux_results_top1000
+qwen_results_top1000
+temp_flat_results_cfg*/
+
+# Results to ignore
+ace_plus_results_top1000/
+magicbrush_results_top1000/
+omini_results_top1000/
+evaluation_*.csv
+*summary.json
+eval_*.log
+dreamsim_viz_*.png
+qwen_results_woste_top1000_pixelmask_cfg4
+temp_ste_masks
+pico_test/
+ste_mask*
+ACE_plus/
+models/
+eval_results*
+final_comparison_results/
