@@ -27,7 +27,7 @@ CUDA_VISIBLE_DEVICES=1,2,3,4,5 accelerate launch --multi_gpu --num_processes 5 D
   --dataset_num_workers 8 \
   --find_unused_parameters \
   --task "lbm:train" \
-  --save_steps 5000 \
+  --save_steps 2000 \
   --cfg_drop_prob 0.1 \
   --disable_epoch_resume \
   --gradient_accumulation_steps 32 \

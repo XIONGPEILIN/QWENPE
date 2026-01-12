@@ -170,7 +170,7 @@ def main():
                     back_mask=back_mask,
                     height=height,
                     width=width,
-                    num_inference_steps=50,
+                    num_inference_steps=20,
                     cfg_scale=cfg,
                     seed=42,
                     inpaint_blend_alpha=0.1,
