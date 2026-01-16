@@ -1,0 +1,32 @@
+{
+  "dataset_qwen_pe_train_crop": {
+    "total_items": 42425,
+    "distribution": {
+      "Replace one object category with another": 13802,
+      "Add a new object to the scene": 12987,
+      "Remove an existing object": 12562,
+      "Clothing edit (change color/outfit)": 1694,
+      "Add/Remove/Replace Accessories (glasses, hats, jewelry, masks)": 1380
+    }
+  },
+  "dataset_qwen_pe_top1000": {
+    "total_items": 1000,
+    "distribution": {
+      "Add a new object to the scene": 347,
+      "Replace one object category with another": 302,
+      "Remove an existing object": 249,
+      "Add/Remove/Replace Accessories (glasses, hats, jewelry, masks)": 53,
+      "Clothing edit (change color/outfit)": 49
+    }
+  },
+  "dataset_qwen_pe_test_remains": {
+    "total_items": 444,
+    "distribution": {
+      "Replace one object category with another": 161,
+      "Add a new object to the scene": 158,
+      "Remove an existing object": 99,
+      "Clothing edit (change color/outfit)": 15,
+      "Add/Remove/Replace Accessories (glasses, hats, jewelry, masks)": 11
+    }
+  }
+}

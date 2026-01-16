@@ -84,13 +84,18 @@ def main():
     random.seed(666)
     selected_samples = random.sample(dataset, min(24, len(dataset)))
     
-    indexed_samples = list(enumerate(selected_samples, 1))
-    my_samples = indexed_samples[worker_id::num_workers]
+    # Dynamic Load Balancing: Shuffle work list uniquely per worker
+    work_list = list(enumerate(selected_samples, 1))
+    random.seed(worker_id)
+    random.shuffle(work_list)
+    
+    lock_dir = repo_root / "locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"[Worker {worker_id}/{num_workers}] Starting. Assigned {len(my_samples)} samples.")
+    print(f"[Worker {worker_id}/{num_workers}] Starting dynamic processing. Pool size: {len(work_list)}")
 
-    if not my_samples:
-        print(f"[Worker {worker_id}] No samples to process. Exiting.")
+    if not work_list:
+        print(f"[Worker {worker_id}] No samples. Exiting.")
         return
 
     device = "cuda"
@@ -108,24 +113,34 @@ def main():
     }
 
     try:
+        # pipe = QwenImagePipeline.from_pretrained(
+        #     torch_dtype=torch.bfloat16,
+        #     device=device,
+        #     model_configs=[
+        #         ModelConfig(model_id="Qwen/Qwen-Image-Edit-2511", origin_file_pattern="transformer/diffusion_pytorch_model*.safetensors", **vram_config),
+        #         ModelConfig(model_id="Qwen/Qwen-Image", origin_file_pattern="text_encoder/model*.safetensors", **vram_config),
+        #         ModelConfig(model_id="Qwen/Qwen-Image", origin_file_pattern="vae/diffusion_pytorch_model.safetensors", **vram_config),
+        #     ],
+        #     processor_config=ModelConfig(model_id="Qwen/Qwen-Image-Edit", origin_file_pattern="processor/"),
+        #     vram_limit=torch.cuda.mem_get_info(device)[1] / (1024 ** 3) - 4,
+        # )
         pipe = QwenImagePipeline.from_pretrained(
-            torch_dtype=torch.bfloat16,
-            device=device,
-            model_configs=[
-                ModelConfig(model_id="Qwen/Qwen-Image-Edit-2511", origin_file_pattern="transformer/diffusion_pytorch_model*.safetensors", **vram_config),
-                ModelConfig(model_id="Qwen/Qwen-Image", origin_file_pattern="text_encoder/model*.safetensors", **vram_config),
-                ModelConfig(model_id="Qwen/Qwen-Image", origin_file_pattern="vae/diffusion_pytorch_model.safetensors", **vram_config),
-            ],
-            processor_config=ModelConfig(model_id="Qwen/Qwen-Image-Edit", origin_file_pattern="processor/"),
-            vram_limit=torch.cuda.get_device_properties(device).total_memory / (1024 ** 3) - 2,
-        )
+                torch_dtype=torch.bfloat16,
+                device=device,
+                model_configs=[
+                    ModelConfig(model_id="Qwen/Qwen-Image-Edit-2511", origin_file_pattern="transformer/diffusion_pytorch_model*.safetensors"),
+                    ModelConfig(model_id="Qwen/Qwen-Image", origin_file_pattern="text_encoder/model*.safetensors"),
+                    ModelConfig(model_id="Qwen/Qwen-Image", origin_file_pattern="vae/diffusion_pytorch_model.safetensors"),
+                ],
+                processor_config=ModelConfig(model_id="Qwen/Qwen-Image-Edit", origin_file_pattern="processor/"),
+            )
     except Exception as e:
         print(f"[Worker {worker_id}] Failed to load pipeline: {e}")
         return
 
     # Updated to LBM checkpoint
-    ckpt_path = repo_root / "train/Qwen-Image-Edit-LBM_lora-rank512/step-10000.safetensors"
-    ckpt_name = "LBM-step10000"
+    ckpt_path = repo_root / "train/Qwen-Image-Edit-LBM_lora-rank512/step-34000.safetensors"
+    ckpt_name = "LBM-step34000"
 
     print(f"[Worker {worker_id}] Loading LBM checkpoint: {ckpt_path}")
     try:
@@ -136,8 +151,19 @@ def main():
 
     image_folder = "pico-banana-400k-subject_driven/openimages"
 
-    for global_idx, sample in my_samples:
-        print(f"[Worker {worker_id}] Processing sample {global_idx} (Checkpint: {ckpt_name})")
+    for global_idx, sample in work_list:
+        # Dynamic Locking
+        lock_file = lock_dir / f"{ckpt_name}_{global_idx}.lock"
+        if lock_file.exists():
+            continue
+        try:
+            # Atomic claim
+            with open(lock_file, "x") as f:
+                f.write(str(worker_id))
+        except FileExistsError:
+            continue
+            
+        print(f"[Worker {worker_id}] Claimed sample {global_idx} (Checkpint: {ckpt_name})")
         
         try:
             image_path = repo_root / image_folder / sample["image"]
@@ -150,7 +176,7 @@ def main():
 
             width, height = target_image.size
 
-            for cfg in [1.0, 4.0]:
+            for cfg in [1.0,2.0, 4.0]:
                 print(f"[Worker {worker_id}] Processing sample {global_idx} (CFG: {cfg})")
 
                 # Create sample directory
@@ -170,11 +196,11 @@ def main():
                     back_mask=back_mask,
                     height=height,
                     width=width,
-                    num_inference_steps=20,
+                    num_inference_steps=40,
                     cfg_scale=cfg,
                     seed=42,
-                    inpaint_blend_alpha=0.1,
-                    use_bbox_mask=False,
+                    inpaint_blend_alpha=0,
+                    use_bbox_mask=True,
                 )
 
                 image.save(sample_dir / "output.png")

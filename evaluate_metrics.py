@@ -166,19 +166,19 @@ def gpu_worker(gpu_id, task_indices, result_queue, args, dataset):
             row = {"filename": filename, "prompt": prompt}
             
             # Metrics calculation logic
-            row["clip_i"], row["clip_t"] = compute_siglip2(img_p, img_g, prompt)
+            row["siglip2_i"], row["siglip2_t"] = compute_siglip2(img_p, img_g, prompt)
             row["dino"] = compute_dino(img_p, img_g)
             row["dreamsim"] = compute_ds(img_p, img_g)
             
             if mask_p:
                 bbox = extract_bbox(mask_p)
                 if bbox:
-                    row["clip_i_bbox"], _ = compute_siglip2(img_p.crop(bbox), img_g.crop(bbox))
+                    row["siglip2_i_bbox"], _ = compute_siglip2(img_p.crop(bbox), img_g.crop(bbox))
                     row["dino_bbox"] = compute_dino(img_p.crop(bbox), img_g.crop(bbox))
                     row["dreamsim_bbox"] = compute_ds(img_p.crop(bbox), img_g.crop(bbox))
                 
                 black = Image.new("RGB", img_p.size, (0, 0, 0))
-                row["clip_i_mask"], _ = compute_siglip2(Image.composite(img_p, black, mask_p), Image.composite(img_g, black, mask_p))
+                row["siglip2_i_mask"], _ = compute_siglip2(Image.composite(img_p, black, mask_p), Image.composite(img_g, black, mask_p))
                 row["dino_mask"] = compute_dino(Image.composite(img_p, black, mask_p), Image.composite(img_g, black, mask_p))
                 row["dreamsim_mask"] = compute_ds(Image.composite(img_p, black, mask_p), Image.composite(img_g, black, mask_p))
 
@@ -280,9 +280,9 @@ def main():
     valid = [r for r in results if r is not None]
     if valid:
         df = pd.DataFrame(valid); df.to_csv(args.output_csv, index=False)
-        m_map = {"clip_i": "SigLIP2_I", "clip_t": "SigLIP2_T", "dino": "DINO", "dreamsim": "DS",
-                 "clip_i_bbox": "SigLIP2_I_BBox", "dino_bbox": "DINO_BBox", "dreamsim_bbox": "DS_BBox",
-                 "clip_i_mask": "SigLIP2_I_Mask", "dino_mask": "DINO_Mask", "dreamsim_mask": "DS_Mask",
+        m_map = {"siglip2_i": "SigLIP2_I", "siglip2_t": "SigLIP2_T", "dino": "DINO", "dreamsim": "DS",
+                 "siglip2_i_bbox": "SigLIP2_I_BBox", "dino_bbox": "DINO_BBox", "dreamsim_bbox": "DS_BBox",
+                 "siglip2_i_mask": "SigLIP2_I_Mask", "dino_mask": "DINO_Mask", "dreamsim_mask": "DS_Mask",
                  "l2": "MSE", "l1": "MAE",
                  "l2_in_mask": "MSE_InMask", "l1_in_mask": "MAE_InMask",
                  "l2_out_mask": "MSE_OutMask", "l1_out_mask": "MAE_OutMask",

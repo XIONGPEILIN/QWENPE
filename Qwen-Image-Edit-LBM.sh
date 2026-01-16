@@ -8,8 +8,7 @@ CACHE_PATH="./data/Qwen-Image-Edit-2511_lora-rank512-split-cache"
 OUTPUT_PATH="./train/Qwen-Image-Edit-LBM_lora-rank512"
 
 # Phase 2: Training with LBM task
-# Optimization: Standard DDP (Fastest on 96GB VRAM) + Dynamic Partial GC (Ratio 0.6).
-CUDA_VISIBLE_DEVICES=1,2,3,4,5 accelerate launch --multi_gpu --num_processes 5 DiffSynth-Studio/examples/qwen_image/model_training/train.py \
+CUDA_VISIBLE_DEVICES=7  accelerate launch  DiffSynth-Studio/examples/qwen_image/model_training/train.py \
   --dataset_base_path "$CACHE_PATH" \
   --data_file_keys "image,edit_image,ref_gt,back_mask" \
   --extra_inputs "edit_image,ref_gt,back_mask" \
@@ -21,6 +20,7 @@ CUDA_VISIBLE_DEVICES=1,2,3,4,5 accelerate launch --multi_gpu --num_processes 5 D
   --remove_prefix_in_ckpt "pipe.dit." \
   --output_path "$OUTPUT_PATH" \
   --lora_base_model "dit" \
+  --lora_checkpoint "train/Qwen-Image-Edit-2511_lora-rank512-cfg/step-28000.safetensors" \
   --trainable_models "ste" \
   --lora_target_modules "to_q,to_k,to_v,add_q_proj,add_k_proj,add_v_proj,to_out.0,to_add_out,img_mlp.net.0.proj,img_mlp.net.2,img_mod.1,txt_mlp.net.0.proj,txt_mlp.net.2,txt_mod.1,img_in,txt_in,proj_out" \
   --lora_rank 512 \

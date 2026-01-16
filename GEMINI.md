@@ -1,99 +1,77 @@
-# Qwen Image Edit (DiffSynth-Studio) Project
+# 中文回答所有问题
+# Qwen-Image-Edit Project Context
 
 ## Project Overview
+This project focuses on the development, training, and evaluation of **Qwen-Image-Edit** models, leveraging the **DiffSynth-Studio** framework. The primary goal is to improve image editing capabilities (e.g., object replacement, removal) using Parameter-Efficient Fine-Tuning (PEFT/LoRA) and investigating architectural decisions like Spatio-Temporal Encodings (STE).
 
-This project is a workspace focused on training and deploying image editing models, primarily **Qwen-Image-Edit-2511** (current focus) and its predecessor 2509, utilizing the **DiffSynth-Studio** framework. It includes scripts for data preparation, model training (using LoRA and Split Training), and interactive inference via a Gradio Web UI.
+## Directory Structure & Key Components
 
-**Core Technologies:**
-*   **DiffSynth-Studio:** The underlying diffusion model engine (located in `DiffSynth-Studio/`).
-*   **Qwen-Image-Edit (2511):** The primary model architecture being fine-tuned. 2511 is the latest version in use.
-*   **PyTorch & Accelerate:** For model training and inference.
-*   **Gradio:** For the web-based demonstration interface.
+### Core Code
+*   **`DiffSynth-Studio/`**: The underlying diffusion model library. Contains the core logic for model loading, pipelines, and training loops.
+*   **`ACE_plus/`**: Comparison model (ACE++) implementation.
+*   **`apps_demo/`**: Gradio-based web UIs for interactive demonstrations (`app_gradio.py`).
 
-## Directory Structure
+### Scripts & Workflows
+*   **Training (`Qwen-Image-Edit-*.sh`)**: Shell scripts driving the training process. Training is typically split into two stages:
+    1.  **Data Caching**: Pre-processing images/text into latents (stored in `data/`).
+    2.  **Training**: Fine-tuning the DiT model (stored in `train/`) using the cached data.
+*   **Inference (`qwen_cli_single_multi_turn.py`, `Qwen-Image-Test.py`)**: Scripts for running model inference. `qwen_cli_single_multi_turn.py` supports multi-turn interactions.
+*   **Evaluation (`evaluate_metrics.py`, `batch_eval_cfgs.py`)**: Tools for computing metrics like SigLIP, DINO, DreamSim, L1/L2.
+*   **Automation (`auto_launch_training.sh`)**: A utility to monitor GPU usage and automatically launch training jobs when resources are available.
 
-*   `DiffSynth-Studio/`: The core library source code (likely a submodule or clone).
-*   `app_gradio.py`: Main entry point for the interactive Web UI.
-*   `Qwen-Image-Edit-2511.sh`: Primary training script for the 2511 model.
-*   `Qwen-Image-Edit-2509.sh`: Training script for the 2509 model.
-*   `generate_dataset_*.py`: Scripts for dataset preparation and JSON generation.
-*   `*.json`: Dataset metadata files (e.g., `dataset_qwen_pe_train_crop.json`).
-*   `train/`: Directory storing training checkpoints (LoRA weights).
-*   `data/`: Directory for dataset images and caching.
+### Data
+*   **`dataset_*.json`**: Dataset definitions.
+    *   **Schema**:
+        ```json
+        {
+          "prompt": "Instruction text...",
+          "image": "path/to/source.png",
+          "edit_image": ["path/to/target.png"],
+          "ref_gt": "path/to/ground_truth.png",
+          "back_mask": "path/to/mask.png"
+        }
+        ```
+*   **`data/`**: Storage for pre-computed training caches (latents).
+*   **`pico-banana-400k-subject_driven/`**: Raw image data repository.
+*   **`final_comparison_results/`**: Aggregated results comparing Qwen against Flux, ACE++, etc.
 
 ## Usage Guide
 
-### 1. Running the Web UI (Inference)
+### 1. Environment
+*   **Virtual Env**: Located in `.venv/`. Ensure it is activated.
+*   **Configuration**: `accelerate_config.yaml` manages distributed training settings.
 
-To launch the interactive image editing interface:
-
+### 2. Running Training
+Training is launched via shell scripts that wrap `accelerate launch`.
+Example (`Qwen-Image-Edit-2511.sh`):
 ```bash
-python app_gradio.py
-```
+# Set WANDB variables
+export WANDB_PROJECT="qwen-image"
+export WANDB_NAME="My-Experiment"
 
-*   **Port:** 7999 (by default).
-*   **Functionality:** Allows uploading an image, drawing a mask, providing a prompt, and generating an edited version.
-*   **Dependencies:** Requires `DiffSynth-Studio` in the python path (handled by the script) and specific LoRA checkpoints.
-
-### 2. Training (Focus: 2511)
-
-Training is typically handled via shell scripts that utilize `accelerate`. The current priority is **2511**.
-
-**Example: `Qwen-Image-Edit-2511.sh`**
-
-This script uses a split training process:
-1.  **Phase 1 (Data Processing):** Pre-computes text embeddings and VAE latents.
-2.  **Phase 2 (Training):** Trains the DiT with specific requirements for 2511.
-
-**Crucial for 2511:**
-*   **`--zero_cond_t` flag:** Mandatory for 2511 model training.
-*   **Expanded LoRA Modules:** Includes `img_in`, `txt_in`, and `proj_out`.
-*   **Gradient Accumulation:** Typically set to 16.
-
-```bash
+# Execute the script (handles caching and training)
 bash Qwen-Image-Edit-2511.sh
 ```
+*Note: Check `auto_launch_training.sh` for automated scheduling on busy nodes.*
 
-**Key Environment Variables:**
-*   `WANDB_PROJECT`: WandB project name (default: `qwen-image`).
-*   `WANDB_NAME`: WandB run name.
-
-### 3. Data Preparation
-
-Dataset metadata is stored in JSON files containing lists of entries with:
-*   `prompt`: Text description of the edit.
-*   `image`: Target image path.
-*   `edit_image`: Source/Input image path (list).
-*   `ref_gt`: Reference ground truth.
-*   `back_mask`: Background mask path.
-
-Scripts like `generate_dataset_json_mp.py` are used to generate these JSON files from raw image directories.
-
-### 4. LBM (Latent Bridge Matching) Training
-
-LBM is a new training paradigm implemented in this project to speed up and improve image-to-image translation tasks.
-
-**Core Mechanisms:**
-*   **Bridge Paths:**
-    *   **Main Stream**: Interpolates from source image latents ($x_0$) to target image latents ($x_1$).
-    *   **Sub Stream**: Interpolates from **pure white image latents** to target image latents.
-*   **Start Logic**: The `sub_noise` key in cache files stores pre-computed white image latents encoded via VAE for maximum precision.
-*   **Loss Function**: `LatentBridgeMatchingLoss` in `diffsynth/diffusion/loss.py`.
-
-**Training Constraints:**
-*   **Optimizer**: Uses `ProdigyPlusScheduleFree`.
-*   **No Gradient Clipping**: **DO NOT** enable `gradient_clipping` in DeepSpeed/Accelerate config as it conflicts with the optimizer's logic.
-*   **ZeRO-3 Configuration**: Optimized for 96GB VRAM GPUs (e.g., RTX 6000 Blackwell).
-    *   `offload_param_device: none` and `offload_optimizer_device: none` to keep everything on GPU for speed.
-    *   Large communication buckets (`5e8`) and `overlap_comm: true` for throughput.
-
-**Launch Command:**
+### 3. Inference & Testing
+To run inference on the top 1000 dataset:
 ```bash
-bash Qwen-Image-Edit-LBM.sh
+python Qwen-Image-Test.py \
+    --model_path "path/to/checkpoint" \
+    --output_dir "my_results/"
+```
+
+### 4. Evaluation
+To evaluate generated results against ground truth:
+```bash
+python evaluate_metrics.py \
+    --pred_dir "my_results/" \
+    --gt_dir "path/to/ground_truths/" \
+    --json_path "dataset_qwen_pe_top1000.json"
 ```
 
 ## Development Conventions
-
-*   **Path Resolution:** Scripts often dynamically add `DiffSynth-Studio` to `sys.path`. Ensure the directory structure remains consistent.
-*   **Model Configs:** The project uses `ModelConfig` objects from `diffsynth` to define model paths and patterns.
-*   **LoRA Loading:** Custom logic exists (e.g., in `app_gradio.py`) to load STE (Spatial Temporal Encoder) and LoRA weights specifically for Qwen-Image-Edit.
+*   **Paths**: Scripts often use absolute paths (e.g., `/export/ssd2/...`). Be careful when moving code between environments.
+*   **DiffSynth-Studio**: This is a critical dependency. Changes to core modeling logic often happen inside this submodule.
+*   **Results**: Experiment outputs are structured by model and configuration (e.g., `qwen_results_top1000`, `flux_results_top1000`).

@@ -2,8 +2,8 @@
 
 # Configuration
 SCRIPT="Qwen-Image-Test-LBM.py"
-NUM_WORKERS=8
-GPU_IDS=(0 1 2 3 4 5 6 7)  # Array of GPU IDs to use
+GPU_IDS=(0 4 5 )  # Array of GPU IDs to use
+NUM_WORKERS=3
 LOG_DIR="logs"
 
 # Create log directory

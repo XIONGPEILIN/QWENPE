@@ -84,16 +84,18 @@ def main():
     random.seed(666)
     selected_samples = random.sample(dataset, min(24, len(dataset)))
     
-    # Distribute samples: slicing with step = num_workers
-    # Sample 0 goes to worker 0, Sample 1 to worker 1 ... Sample N to worker 0
-    # Keep the original 1-based index for consistent folder naming
-    indexed_samples = list(enumerate(selected_samples, 1))
-    my_samples = indexed_samples[worker_id::num_workers]
+    # Dynamic Load Balancing: Shuffle work list uniquely per worker
+    work_list = list(enumerate(selected_samples, 1))
+    random.seed(worker_id)
+    random.shuffle(work_list)
+    
+    lock_dir = repo_root / "locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"[Worker {worker_id}/{num_workers}] Starting. Assigned {len(my_samples)} samples.")
+    print(f"[Worker {worker_id}/{num_workers}] Starting dynamic processing. Pool size: {len(work_list)}")
 
-    if not my_samples:
-        print(f"[Worker {worker_id}] No samples to process. Exiting.")
+    if not work_list:
+        print(f"[Worker {worker_id}] No samples. Exiting.")
         return
 
     # Since we use CUDA_VISIBLE_DEVICES in the shell script, we always see 'cuda:0' inside the container
@@ -158,8 +160,19 @@ def main():
             print(f"[Worker {worker_id}] Error loading checkpoint {ckpt_name}: {e}")
             continue
 
-        for global_idx, sample in my_samples:
-            print(f"[Worker {worker_id}] Processing sample {global_idx} (Checkpint: {ckpt_name})")
+        for global_idx, sample in work_list:
+            # Dynamic Locking
+            lock_file = lock_dir / f"{ckpt_name}_{global_idx}.lock"
+            if lock_file.exists():
+                continue
+            try:
+                # Atomic claim
+                with open(lock_file, "x") as f:
+                    f.write(str(worker_id))
+            except FileExistsError:
+                continue
+
+            print(f"[Worker {worker_id}] Claimed sample {global_idx} (Checkpint: {ckpt_name})")
             
             try:
                 image_path = repo_root / image_folder / sample["image"]
