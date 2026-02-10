@@ -113,34 +113,34 @@ def main():
     }
 
     try:
-        # pipe = QwenImagePipeline.from_pretrained(
-        #     torch_dtype=torch.bfloat16,
-        #     device=device,
-        #     model_configs=[
-        #         ModelConfig(model_id="Qwen/Qwen-Image-Edit-2511", origin_file_pattern="transformer/diffusion_pytorch_model*.safetensors", **vram_config),
-        #         ModelConfig(model_id="Qwen/Qwen-Image", origin_file_pattern="text_encoder/model*.safetensors", **vram_config),
-        #         ModelConfig(model_id="Qwen/Qwen-Image", origin_file_pattern="vae/diffusion_pytorch_model.safetensors", **vram_config),
-        #     ],
-        #     processor_config=ModelConfig(model_id="Qwen/Qwen-Image-Edit", origin_file_pattern="processor/"),
-        #     vram_limit=torch.cuda.mem_get_info(device)[1] / (1024 ** 3) - 4,
-        # )
         pipe = QwenImagePipeline.from_pretrained(
-                torch_dtype=torch.bfloat16,
-                device=device,
-                model_configs=[
-                    ModelConfig(model_id="Qwen/Qwen-Image-Edit-2511", origin_file_pattern="transformer/diffusion_pytorch_model*.safetensors"),
-                    ModelConfig(model_id="Qwen/Qwen-Image", origin_file_pattern="text_encoder/model*.safetensors"),
-                    ModelConfig(model_id="Qwen/Qwen-Image", origin_file_pattern="vae/diffusion_pytorch_model.safetensors"),
-                ],
-                processor_config=ModelConfig(model_id="Qwen/Qwen-Image-Edit", origin_file_pattern="processor/"),
-            )
+            torch_dtype=torch.bfloat16,
+            device=device,
+            model_configs=[
+                ModelConfig(model_id="Qwen/Qwen-Image-Edit-2511", origin_file_pattern="transformer/diffusion_pytorch_model*.safetensors", **vram_config),
+                ModelConfig(model_id="Qwen/Qwen-Image", origin_file_pattern="text_encoder/model*.safetensors", **vram_config),
+                ModelConfig(model_id="Qwen/Qwen-Image", origin_file_pattern="vae/diffusion_pytorch_model.safetensors", **vram_config),
+            ],
+            processor_config=ModelConfig(model_id="Qwen/Qwen-Image-Edit", origin_file_pattern="processor/"),
+            vram_limit=torch.cuda.mem_get_info(device)[1] / (1024 ** 3) - 4,
+        )
+        # pipe = QwenImagePipeline.from_pretrained(
+        #         torch_dtype=torch.bfloat16,
+        #         device=device,
+        #         model_configs=[
+        #             ModelConfig(model_id="Qwen/Qwen-Image-Edit-2511", origin_file_pattern="transformer/diffusion_pytorch_model*.safetensors"),
+        #             ModelConfig(model_id="Qwen/Qwen-Image", origin_file_pattern="text_encoder/model*.safetensors"),
+        #             ModelConfig(model_id="Qwen/Qwen-Image", origin_file_pattern="vae/diffusion_pytorch_model.safetensors"),
+        #         ],
+        #         processor_config=ModelConfig(model_id="Qwen/Qwen-Image-Edit", origin_file_pattern="processor/"),
+        #     )
     except Exception as e:
         print(f"[Worker {worker_id}] Failed to load pipeline: {e}")
         return
 
     # Updated to LBM checkpoint
-    ckpt_path = repo_root / "train/Qwen-Image-Edit-LBM_lora-rank512/step-34000.safetensors"
-    ckpt_name = "LBM-step34000"
+    ckpt_path = repo_root / "train/Qwen-Image-Edit-LBM_lora-rank512/step-72000.safetensors"
+    ckpt_name = "LBM-step72000"
 
     print(f"[Worker {worker_id}] Loading LBM checkpoint: {ckpt_path}")
     try:

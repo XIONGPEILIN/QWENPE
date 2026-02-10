@@ -21,9 +21,9 @@ from dreamsim import dreamsim as load_dreamsim_lib
 # -----------------------------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------------------------
-CKPT_NAME = "2011-ste-28000"
+CKPT_NAME = "LBM-step72000"
 BASE_GRID_DIR = Path("compare/grid_search")
-JSON_PATH = "dataset_qwen_pe_top1000.json"
+JSON_PATH = "dataset_qwen_pe_top1000_captioned.json"
 GT_BASE_DIR = "/home/yanai-lab/xiong-p/ssd/xiong-p/qwenpe/pico-banana-400k-subject_driven/openimages"
 AVAILABLE_GPUS = [0, 1, 2, 3, 4, 5, 7]
 
@@ -77,7 +77,9 @@ class EvalDataset(Dataset):
             "img_p": img_p,
             "img_g": img_g,
             "mask_p": mask_p,
-            "prompt": entry.get('prompt', "")
+            "prompt": entry.get('prompt', ""),
+            "global_caption": entry.get("global_caption", ""),
+            "local_caption": entry.get("local_caption", "")
         }
 
 # -----------------------------------------------------------------------------
@@ -112,6 +114,10 @@ def persistent_gpu_worker(gpu_id, task_queue, result_queue):
         print(f"[GPU {gpu_id}] FATAL: Model Init Failed: {e}")
         return
 
+    # Pre-extract scale and bias for SigLIP2 transform
+    logit_scale = siglip_model.logit_scale.exp().item()
+    logit_bias = siglip_model.logit_bias.item()
+
     def extract_bbox(mask_pil):
         mask_np = np.array(mask_pil)
         rows = np.any(mask_np > 128, axis=1); cols = np.any(mask_np > 128, axis=0)
@@ -141,7 +147,12 @@ def persistent_gpu_worker(gpu_id, task_queue, result_queue):
             for i in range(len(dataset)):
                 item = dataset[i]
                 filename, img_p, img_g, mask_p, prompt = item["filename"], item["img_p"], item["img_g"], item["mask_p"], item["prompt"]
-                row = {"filename": filename, "prompt": prompt}
+                global_cap = item.get("global_caption", "")
+                local_cap = item.get("local_caption", "")
+                row = {"filename": filename, "prompt": prompt, "global_caption": global_cap, "local_caption": local_cap}
+                
+                # Use global_caption if available, else fallback to prompt
+                text_for_global = global_cap if global_cap else prompt
 
                 # --- Metrics Logic ---
                 # SigLIP
@@ -156,13 +167,19 @@ def persistent_gpu_worker(gpu_id, task_queue, result_queue):
                     emb_gt = siglip_model.get_image_features(**inputs_gt)
                     emb_img = emb_img / emb_img.norm(dim=-1, keepdim=True)
                     emb_gt = emb_gt / emb_gt.norm(dim=-1, keepdim=True)
-                    row["clip_i"] = torch.sum(emb_img.float() * emb_gt.float(), dim=-1).item()
+                    row["siglip2_i"] = torch.sum(emb_img.float() * emb_gt.float(), dim=-1).item()
                     
-                    if prompt:
-                        inputs_text = siglip_processor(text=prompt, return_tensors="pt", padding="max_length", truncation=True, max_length=64).to(device)
-                        emb_text = siglip_model.get_text_features(**inputs_text)
-                        emb_text = emb_text / emb_text.norm(dim=-1, keepdim=True)
-                        row["clip_t"] = torch.sum(emb_img.float() * emb_text.float(), dim=-1).item()
+                    if not text_for_global:
+                        raise ValueError(f"Missing text_for_global (global_caption or prompt) for {filename}")
+                    
+                    inputs_text = siglip_processor(text=text_for_global, return_tensors="pt", padding="max_length", truncation=True, max_length=64).to(device)
+                    emb_text = siglip_model.get_text_features(**inputs_text)
+                    emb_text = emb_text / emb_text.norm(dim=-1, keepdim=True)
+                    # Apply Sigmoid(Logits) transform
+                    cosine_sim = torch.sum(emb_img.float() * emb_text.float(), dim=-1).item()
+                    logits = cosine_sim * logit_scale + logit_bias
+                    row["siglip2_t"] = torch.sigmoid(torch.tensor(logits)).item()
+                    row["siglip2_t_global"] = row["siglip2_t"]  # Alias for clarity
 
                 # DINO
                 with torch.inference_mode():
@@ -194,7 +211,19 @@ def persistent_gpu_worker(gpu_id, task_queue, result_queue):
                         with torch.inference_mode():
                             e_b_p = siglip_model.get_image_features(**inp_b_p); e_b_p /= e_b_p.norm(dim=-1, keepdim=True)
                             e_b_g = siglip_model.get_image_features(**inp_b_g); e_b_g /= e_b_g.norm(dim=-1, keepdim=True)
-                            row["clip_i_bbox"] = torch.sum(e_b_p.float() * e_b_g.float(), dim=-1).item()
+                            row["siglip2_i_bbox"] = torch.sum(e_b_p.float() * e_b_g.float(), dim=-1).item()
+                        
+                        # SigLIP2_T_Local
+                        if not local_cap:
+                            raise ValueError(f"Missing local_caption for {filename}")
+                        
+                        with torch.inference_mode():
+                            inp_t_l = siglip_processor(text=local_cap, return_tensors="pt", padding="max_length", truncation=True, max_length=64).to(device)
+                            e_t_l = siglip_model.get_text_features(**inp_t_l)
+                            e_t_l = e_t_l / e_t_l.norm(dim=-1, keepdim=True)
+                            cosine_sim_l = torch.sum(e_b_p.float() * e_t_l.float(), dim=-1).item()
+                            logits_l = cosine_sim_l * logit_scale + logit_bias
+                            row["siglip2_t_local"] = torch.sigmoid(torch.tensor(logits_l)).item()
                         
                         # DINO BBox
                         with torch.inference_mode():
@@ -224,7 +253,7 @@ def persistent_gpu_worker(gpu_id, task_queue, result_queue):
                     with torch.inference_mode():
                         e_m_p = siglip_model.get_image_features(**inp_m_p); e_m_p /= e_m_p.norm(dim=-1, keepdim=True)
                         e_m_g = siglip_model.get_image_features(**inp_m_g); e_m_g /= e_m_g.norm(dim=-1, keepdim=True)
-                        row["clip_i_mask"] = torch.sum(e_m_p.float() * e_m_g.float(), dim=-1).item()
+                        row["siglip2_i_mask"] = torch.sum(e_m_p.float() * e_m_g.float(), dim=-1).item()
 
                     # DINO Mask
                     with torch.inference_mode():
@@ -291,9 +320,10 @@ def persistent_gpu_worker(gpu_id, task_queue, result_queue):
                 df.to_csv(output_csv, index=False)
                 
                 m_map = {
-                    "clip_i": "SigLIP2_I", "clip_t": "SigLIP2_T", "dino": "DINO", "dreamsim": "DS",
-                    "clip_i_bbox": "SigLIP2_I_BBox", "dino_bbox": "DINO_BBox", "dreamsim_bbox": "DS_BBox",
-                    "clip_i_mask": "SigLIP2_I_Mask", "dino_mask": "DINO_Mask", "dreamsim_mask": "DS_Mask",
+                    "siglip2_i": "SigLIP2_I", "siglip2_t": "SigLIP2_T", "siglip2_t_global": "SigLIP2_T_Global", "siglip2_t_local": "SigLIP2_T_Local",
+                    "dino": "DINO", "dreamsim": "DS",
+                    "siglip2_i_bbox": "SigLIP2_I_BBox", "dino_bbox": "DINO_BBox", "dreamsim_bbox": "DS_BBox",
+                    "siglip2_i_mask": "SigLIP2_I_Mask", "dino_mask": "DINO_Mask", "dreamsim_mask": "DS_Mask",
                     "l2": "MSE", "l1": "MAE",
                     "l2_in_mask": "MSE_InMask", "l1_in_mask": "MAE_InMask",
                     "l2_out_mask": "MSE_OutMask", "l1_out_mask": "MAE_OutMask",
@@ -321,23 +351,24 @@ def prepare_flat_directory(task_name, src_dir):
         shutil.rmtree(flat_dir)
     flat_dir.mkdir(parents=True)
     
-    with open(JSON_PATH, 'r') as f:
-        dataset_data = json.load(f)
-    
     count = 0
     for sample_folder in src_dir.iterdir():
         if not sample_folder.is_dir(): continue
+        sample_json_path = sample_folder / "sample.json"
+        if not sample_json_path.exists(): continue
+        
         try:
-            idx = int(sample_folder.name)
-            if idx < 0 or idx >= len(dataset_data): continue
+            with open(sample_json_path, 'r') as f:
+                sample_info = json.load(f)
             
-            orig_rel_path = dataset_data[idx]['edit_image'][0]
-            filename = os.path.basename(orig_rel_path)
+            if not sample_info.get('edit_image'): continue
+            filename = os.path.basename(sample_info['edit_image'][0])
+            
             output_img = sample_folder / "output.png"
             if output_img.exists():
                 shutil.copy(output_img, flat_dir / filename)
                 count += 1
-        except ValueError:
+        except Exception:
             continue
     return flat_dir if count > 0 else None
 

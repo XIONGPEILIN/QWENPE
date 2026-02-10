@@ -14,7 +14,7 @@ REPO_ROOT_SENTINEL = "dataset_qwen_pe_top1000.json"
 
 
 def find_repo_root(start: Path) -> Path:
-    """Walk upwards until json is found."""
+    """Walk upwards until dataset_qwen_pe_top1000.json is found."""
     cur = start
     for _ in range(10):
         if (cur / REPO_ROOT_SENTINEL).exists():
@@ -35,22 +35,15 @@ def load_mask(path: Path) -> Image.Image:
     return Image.open(path).convert("L")
 
 
-def load_ste_and_lora(pipe, ckpt_path: Path) -> Tuple[int, int]:
+def load_lora(pipe, ckpt_path: Path) -> int:
     """
-    Load STE weights (prefix pipe.ste.) and LoRA tensors into DiT from a safetensors file.
+    Load LoRA tensors into DiT from a safetensors file.
     """
-    pipe.clear_lora()
     if not ckpt_path.exists():
         raise FileNotFoundError(f"Missing checkpoint: {ckpt_path}")
     
     # Load to CPU first
     state = load_file(str(ckpt_path), device="cpu")
-
-    ste_prefix = "pipe.ste."
-    ste_state = {k[len(ste_prefix):]: v for k, v in state.items() if k.startswith(ste_prefix)}
-    if ste_state:
-        # Load STE strictly. Since pipe.ste is likely on GPU, this copy happens here.
-        pipe.ste.load_state_dict(ste_state, strict=False)
 
     lora_state = {k: v for k, v in state.items() if "lora_" in k}
     if lora_state:
@@ -58,7 +51,7 @@ def load_ste_and_lora(pipe, ckpt_path: Path) -> Tuple[int, int]:
         lora_state = {k: v.to(device=pipe.device, dtype=pipe.torch_dtype) for k, v in lora_state.items()}
         pipe.load_lora(pipe.dit, state_dict=lora_state)
 
-    return len(ste_state), len(lora_state)
+    return len(lora_state)
 
 
 def main():
@@ -98,7 +91,6 @@ def main():
         print(f"[Worker {worker_id}] No samples. Exiting.")
         return
 
-    # Since we use CUDA_VISIBLE_DEVICES in the shell script, we always see 'cuda:0' inside the container
     device = "cuda"
     
     # VRAM config
@@ -123,7 +115,7 @@ def main():
         #         ModelConfig(model_id="Qwen/Qwen-Image", origin_file_pattern="vae/diffusion_pytorch_model.safetensors", **vram_config),
         #     ],
         #     processor_config=ModelConfig(model_id="Qwen/Qwen-Image-Edit", origin_file_pattern="processor/"),
-        #     vram_limit=torch.cuda.mem_get_info(device)[1] / (1024 ** 3) - 4,
+        #     vram_limit=torch.cuda.mem_get_info(device)[1] / (1024 ** 3) - 2,
         # )
         pipe = QwenImagePipeline.from_pretrained(
                 torch_dtype=torch.bfloat16,
@@ -141,9 +133,9 @@ def main():
 
     checkpoints = [
         {
-            "path": repo_root / "train/Qwen-Image-Edit-2511_lora-rank512-v1-mainpe/step-42000.safetensors",
-            "name": "2511-mainpe-42000"
-        }
+            "path": repo_root / "train/Qwen-Image-Edit-2511_lora-rank512-cfg-wo_ste_subloss/step-20000.safetensors",
+            "name": "woste-20000"
+        },
     ]
 
     image_folder = "pico-banana-400k-subject_driven/openimages"
@@ -154,7 +146,7 @@ def main():
 
         print(f"[Worker {worker_id}] Loading checkpoint: {ckpt_name}")
         try:
-            load_ste_and_lora(pipe, ckpt_path)
+            load_lora(pipe, ckpt_path)
         except Exception as e:
             print(f"[Worker {worker_id}] Error loading checkpoint {ckpt_name}: {e}")
             continue
@@ -187,33 +179,35 @@ def main():
                 cfgs = [2.0]
                 alphas = [0.1]
 
-                ablation_configs = [
-                    {"name": "baseline", "gate": None, "no_sub": False, "mask_sub": False, "mask_sub_self": False},
-                    {"name": "gate0", "gate": 0, "no_sub": False, "mask_sub": False, "mask_sub_self": False},
-                    {"name": "gate1", "gate": 1, "no_sub": False, "mask_sub": False, "mask_sub_self": False},
-                    {"name": "no_sub_noise", "gate": None, "no_sub": True, "mask_sub": False, "mask_sub_self": False},
-                    {"name": "baseline_mask", "gate": None, "no_sub": False, "mask_sub": True, "mask_sub_self": False},
-                    {"name": "gate0_mask", "gate": 0, "no_sub": False, "mask_sub": True, "mask_sub_self": False},
-                    {"name": "gate1_mask", "gate": 1, "no_sub": False, "mask_sub": True, "mask_sub_self": False},
-                    {"name": "no_sub_noise_mask", "gate": None, "no_sub": True, "mask_sub": True, "mask_sub_self": False},
-                    {"name": "baseline_mask_self", "gate": None, "no_sub": False, "mask_sub": True, "mask_sub_self": True},
-                    {"name": "gate0_mask_self", "gate": 0, "no_sub": False, "mask_sub": True, "mask_sub_self": True},
-                    {"name": "gate1_mask_self", "gate": 1, "no_sub": False, "mask_sub": True, "mask_sub_self": True},
-                ]
+                ablation_configs = []
+                for no_sub in [False, True]:
+                    for mask_sub in [False, True]:
+                        # Test both True and False for mask_sub_self when mask_sub is True.
+                        # If mask_sub is False, mask_sub_self is typically irrelevant, so we keep it False.
+                        sub_self_options = [False, True] if mask_sub else [False]
+                        for mask_sub_self in sub_self_options:
+                            name = f"noSub{no_sub}_maskSub{mask_sub}_maskSelf{mask_sub_self}"
+                            if not no_sub and not mask_sub and not mask_sub_self:
+                                name = "baseline"
+                            ablation_configs.append({
+                                "name": name,
+                                "no_sub": no_sub,
+                                "mask_sub": mask_sub,
+                                "mask_sub_self": mask_sub_self
+                            })
 
                 for cfg in cfgs:
                     for alpha in alphas:
                         for ab_cfg in ablation_configs:
                             ab_name = ab_cfg["name"]
-                            ab_gate = ab_cfg["gate"]
                             ab_no_sub = ab_cfg["no_sub"]
                             ab_mask = ab_cfg["mask_sub"]
                             ab_mask_self = ab_cfg["mask_sub_self"]
 
                             print(f"[Worker {worker_id}] Processing sample {global_idx} (CFG: {cfg}, Alpha: {alpha}, Ablation: {ab_name})")
-                            
+
                             # Create sample directory per Grid Point
-                            sample_dir = repo_root / "pico_test" / "qwen_results_mainpe_42000" / f"{ckpt_name}_cfg{int(cfg)}_alpha{alpha}_{ab_name}" / str(global_idx)
+                            sample_dir = repo_root / "compare" / "qwen_results_woste_ablation" / f"{ckpt_name}_cfg{int(cfg)}_alpha{alpha}_{ab_name}" / str(global_idx)
                             
                             if (sample_dir / "output.png").exists():
                                 print(f"[Worker {worker_id}] Skipping already completed: {sample_dir}")
@@ -239,14 +233,15 @@ def main():
                                 seed=42,
                                 inpaint_blend_alpha=alpha,
                                 use_bbox_mask=True,
-                                ablation_token_gate=ab_gate,
+                                ablation_token_gate=1,
                                 ablation_no_sub_noise=ab_no_sub,
                                 ablation_mask_sub=ab_mask,
                                 ablation_mask_sub_self=ab_mask_self,
                             )
 
                             image.save(sample_dir / "output.png")
-                            sub_image.save(sample_dir / "output_sub.png")
+                            if sub_image is not None:
+                                sub_image.save(sample_dir / "output_sub.png")
 
             except Exception as e:
                 print(f"[Worker {worker_id}] Error processing sample {global_idx}: {e}")

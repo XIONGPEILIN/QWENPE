@@ -6,7 +6,7 @@ dataset_qwen_pe.json
 dataset_qwen_pe_all.json
 
 pe_masks
-DiffSynth-Studio/
+
 vae_real_image_test
 test
 test-cfg4    
@@ -46,3 +46,21 @@ models/
 eval_results*
 final_comparison_results/
 metrics_plots
+locks/
+final_model_galleries/
+*.csv
+*results.json
+*analysis.json
+*metrics.json
+__pycache__/
+*.jpg
+*.png
+magicbrush_all_jsons/
+dataset_qwen_pe_top1000_captioned.json
+ACE_plus
+magicbrash
+*.json
+!dataset_*.json
+!*.py
+!*.sh
+!*.yaml

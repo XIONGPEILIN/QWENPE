@@ -1,12 +1,12 @@
 #!/bin/bash
 export WANDB_PROJECT="${WANDB_PROJECT:-qwen-image}"
-export WANDB_NAME="${WANDB_NAME:-Qwen-Image-Edit-2511-v1-Full}"
+export WANDB_NAME="${WANDB_NAME:-Qwen-Image-Edit-2511-v1-mainpe}"
 
 
 # 两阶段拆分训练：阶段 1 预处理缓存，阶段 2 正式训练
 
 CACHE_PATH="./data/Qwen-Image-Edit-2511_lora-rank512-split-cache"
-OUTPUT_PATH="./train/Qwen-Image-Edit-2511_lora-rank512-v1-Full"
+OUTPUT_PATH="./train/Qwen-Image-Edit-2511_lora-rank512-v1-mainpe"
 
 # # 阶段 1：仅跑前处理（文本编码、VAE 等），生成缓存
 # # 注意：包含所有需要缓存的 key
@@ -32,7 +32,7 @@ OUTPUT_PATH="./train/Qwen-Image-Edit-2511_lora-rank512-v1-Full"
 
 # 阶段 2：加载缓存，只训练 DiT
 # 必须包含 --zero_cond_t 以适配 2511 模型
-accelerate launch DiffSynth-Studio/examples/qwen_image/model_training/train.py \
+CUDA_VISIBLE_DEVICES=1,2,3,4 accelerate launch DiffSynth-Studio/examples/qwen_image/model_training/train.py \
   --dataset_base_path "$CACHE_PATH" \
   --data_file_keys "image,edit_image,ref_gt,back_mask" \
   --extra_inputs "edit_image,ref_gt,back_mask" \
@@ -52,7 +52,7 @@ accelerate launch DiffSynth-Studio/examples/qwen_image/model_training/train.py \
   --wandb_name "${WANDB_NAME}" \
   --find_unused_parameters \
   --task "sft:train" \
-  --save_steps 5000 \
+  --save_steps 2000 \
   --use_gradient_checkpointing \
   --cfg_drop_prob 0.1 \
   --disable_epoch_resume \

@@ -71,7 +71,9 @@ class EvalDataset(Dataset):
             "img_p": img_p,
             "img_g": img_g,
             "mask_p": mask_p,
-            "prompt": entry.get('prompt', "")
+            "prompt": entry.get('prompt', ""),
+            "global_caption": entry.get("global_caption", ""),
+            "local_caption": entry.get("local_caption", "")
         }
 
 # -----------------------------------------------------------------------------
@@ -115,6 +117,10 @@ def gpu_worker(gpu_id, task_indices, result_queue, args, dataset):
 
     pixel_transform = transforms.Compose([transforms.Resize((512, 512)), transforms.ToTensor()])
 
+    # Pre-extract scale and bias
+    logit_scale = siglip_model.logit_scale.exp().item()
+    logit_bias = siglip_model.logit_bias.item()
+
     def compute_siglip2(img, gt, prompt=None):
         inputs_img = siglip_processor(images=img, return_tensors="pt").to(device)
         inputs_gt = siglip_processor(images=gt, return_tensors="pt").to(device)
@@ -131,10 +137,15 @@ def gpu_worker(gpu_id, task_indices, result_queue, args, dataset):
             
             sim_t = np.nan
             if prompt:
+                # Use max_length=64 as per standard SigLIP config
                 inputs_text = siglip_processor(text=prompt, return_tensors="pt", padding="max_length", truncation=True, max_length=64).to(device)
                 emb_text = siglip_model.get_text_features(**inputs_text)
                 emb_text = emb_text / emb_text.norm(dim=-1, keepdim=True)
-                sim_t = torch.sum(emb_img.float() * emb_text.float(), dim=-1).item()
+                
+                # Apply Sigmoid(Logits) transform
+                cosine_sim = torch.sum(emb_img.float() * emb_text.float(), dim=-1).item()
+                logits = cosine_sim * logit_scale + logit_bias
+                sim_t = torch.sigmoid(torch.tensor(logits)).item()
         return sim_i, sim_t
 
     def compute_dino(img, gt):
@@ -162,20 +173,43 @@ def gpu_worker(gpu_id, task_indices, result_queue, args, dataset):
         try:
             item = dataset[idx]
             filename, img_p, img_g, mask_p, prompt = item["filename"], item["img_p"], item["img_g"], item["mask_p"], item["prompt"]
+            global_cap = item.get("global_caption", "")
+            local_cap = item.get("local_caption", "")
             
-            row = {"filename": filename, "prompt": prompt}
+            row = {"filename": filename, "prompt": prompt, "global_caption": global_cap, "local_caption": local_cap}
+            
+            # Use global_caption if available, else fallback to prompt
+            text_for_global = global_cap if global_cap else prompt
             
             # Metrics calculation logic
-            row["siglip2_i"], row["siglip2_t"] = compute_siglip2(img_p, img_g, prompt)
+            row["siglip2_i"], row["siglip2_t"] = compute_siglip2(img_p, img_g, text_for_global)
+            # Alias for clarity
+            row["siglip2_t_global"] = row["siglip2_t"]
+            
             row["dino"] = compute_dino(img_p, img_g)
             row["dreamsim"] = compute_ds(img_p, img_g)
             
             if mask_p:
                 bbox = extract_bbox(mask_p)
                 if bbox:
-                    row["siglip2_i_bbox"], _ = compute_siglip2(img_p.crop(bbox), img_g.crop(bbox))
-                    row["dino_bbox"] = compute_dino(img_p.crop(bbox), img_g.crop(bbox))
-                    row["dreamsim_bbox"] = compute_ds(img_p.crop(bbox), img_g.crop(bbox))
+                    crop_p = img_p.crop(bbox)
+                    crop_g = img_g.crop(bbox)
+                    
+                    row["siglip2_i_bbox"], _ = compute_siglip2(crop_p, crop_g)
+                    
+                    # Compute SigLIP2_T_Local if local_caption exists
+                    if local_cap:
+                        # Original: _, row["siglip2_t_local"] = compute_siglip2(crop_p, crop_g, local_cap)
+                        # We need manual calculation here to reuse crop logic but apply new formula
+                        # Actually compute_siglip2 already does the transform now!
+                        # But wait, compute_siglip2 takes (img, gt, prompt).
+                        # We can just reuse it:
+                        _, row["siglip2_t_local"] = compute_siglip2(crop_p, crop_g, local_cap)
+                    else:
+                        row["siglip2_t_local"] = 0.0
+
+                    row["dino_bbox"] = compute_dino(crop_p, crop_g)
+                    row["dreamsim_bbox"] = compute_ds(crop_p, crop_g)
                 
                 black = Image.new("RGB", img_p.size, (0, 0, 0))
                 row["siglip2_i_mask"], _ = compute_siglip2(Image.composite(img_p, black, mask_p), Image.composite(img_g, black, mask_p))
@@ -280,7 +314,7 @@ def main():
     valid = [r for r in results if r is not None]
     if valid:
         df = pd.DataFrame(valid); df.to_csv(args.output_csv, index=False)
-        m_map = {"siglip2_i": "SigLIP2_I", "siglip2_t": "SigLIP2_T", "dino": "DINO", "dreamsim": "DS",
+        m_map = {"siglip2_i": "SigLIP2_I", "siglip2_t": "SigLIP2_T", "siglip2_t_local": "SigLIP2_T_Local", "dino": "DINO", "dreamsim": "DS",
                  "siglip2_i_bbox": "SigLIP2_I_BBox", "dino_bbox": "DINO_BBox", "dreamsim_bbox": "DS_BBox",
                  "siglip2_i_mask": "SigLIP2_I_Mask", "dino_mask": "DINO_Mask", "dreamsim_mask": "DS_Mask",
                  "l2": "MSE", "l1": "MAE",

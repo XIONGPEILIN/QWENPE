@@ -11,8 +11,15 @@ RESULTS_DIR = 'final_comparison_results'
 OUTPUT_DIR = 'metrics_plots'
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-MODEL_NAMES = ['qwen_w_ste', 'qwen_wo_ste-sub', 'qwen_noste_30k', 'ace_plus', 'flux', 'magicbrush']
-METRICS = ['siglip2_i_mask', 'dino_mask', 'dreamsim_mask', 'l1_out_mask']
+MODEL_NAMES = [
+    'qwen_w_ste_full', 
+    'qwen_wo_ste-sub_full', 
+    'qwen_noste_30k_full', 
+    'ace_plus_top1000_adaptive', 
+    'ace_plus_full', 
+    'flux_full', 
+    'magicbrush_full'
+]
 
 def plot_distributions():
     if not os.path.exists(TOP1000_JSON):
@@ -32,7 +39,7 @@ def plot_distributions():
     # 2. Collect All Data
     all_data = []
     for model in MODEL_NAMES:
-        csv_path = os.path.join(RESULTS_DIR, f"{model}_full.csv")
+        csv_path = os.path.join(RESULTS_DIR, f"{model}.csv")
         if os.path.exists(csv_path):
             df = pd.read_csv(csv_path)
             # Filter Top1000
