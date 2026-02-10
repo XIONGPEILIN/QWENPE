@@ -2,7 +2,6 @@
 
 ## Language
 - **Final answers**: Chinese
-- **Reasoning/other**: English
 
 ## Code Editing
 - Narrow context scope; make incremental changes
@@ -12,6 +11,8 @@
 ```bash
 .venv/bin/python
 ```
+python use .venv 
+
 
 ## Dataset Schema
 | Field | Description |
