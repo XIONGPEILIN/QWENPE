@@ -133,8 +133,8 @@ def main():
 
     checkpoints = [
         {
-            "path": repo_root / "train/Qwen-Image-Edit-2511_lora-rank512-cfg-wo_ste_subloss/step-20000.safetensors",
-            "name": "woste-20000"
+            "path": repo_root / "train/Qwen-Image-Edit-2511_lora-rank512-NoSTE/step-30000.safetensors",
+            "name": "new-woste-30000"
         },
     ]
 
@@ -176,7 +176,7 @@ def main():
 
                 width, height = target_image.size
 
-                for cfg in [1.0, 2.0, 4.0, 6.0]:
+                for cfg in [ 2.0 ]:
                     print(f"[Worker {worker_id}] Processing sample {global_idx} (CFG: {cfg})")
 
                     # Create sample directory

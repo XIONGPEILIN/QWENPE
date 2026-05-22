@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # Configuration
-SCRIPT="Qwen-Image-Test-wost-ab.py"
-GPU_IDS=(0 1 2 3 4)  # Array of GPU IDs to use
-NUM_WORKERS=5
+SCRIPT="Qwen-Image-Test-woste.py"
+GPU_IDS=(0 5 6 7 1 2 3 4)  # Array of GPU IDs to use
+NUM_WORKERS=8
 LOG_DIR="logs"
 
 # Kill existing processes

@@ -59,6 +59,12 @@ magicbrush_all_jsons/
 dataset_qwen_pe_top1000_captioned.json
 ACE_plus
 magicbrash
+subject_dataset_pipeline.py.bak_*
+subject_dataset_runs/
+staging/
+picobanana
+BRIDGE-release/
+ICE-Bench/
 *.json
 !dataset_*.json
 !*.py

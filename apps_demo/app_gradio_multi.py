@@ -40,7 +40,7 @@ print("Initializing Pipeline...")
 # 使用指定的模型配置
 pipe = QwenImagePipeline.from_pretrained(
     torch_dtype=torch.bfloat16,
-    device="cuda:5",
+    device="cuda:1",
     model_configs=[
         ModelConfig(model_id="Qwen/Qwen-Image-Edit-2511", origin_file_pattern="transformer/diffusion_pytorch_model*.safetensors"),
         ModelConfig(model_id="Qwen/Qwen-Image", origin_file_pattern="text_encoder/model*.safetensors"),
@@ -165,9 +165,6 @@ def predict(input_dict, input_image2, input_mask, prompt, cfg_scale, steps, seed
         seed=int(seed),
         inpaint_blend_alpha=float(inpaint_blend_alpha),
         use_bbox_mask=use_bbox_mask,
-        save_ste_masks=show_ste_masks,
-        ste_mask_output_dir=ste_mask_dir,
-        ste_mode=ste_mode,
     )
     
     # 裁剪掉 Padding 部分，防止黑边累积
@@ -256,4 +253,4 @@ with gr.Blocks(css=css) as demo:
     )
 
 if __name__ == "__main__":
-    demo.queue().launch(server_name="0.0.0.0", server_port=7999, share=True)
+    demo.queue().launch(server_name="0.0.0.0", server_port=7850, share=True)

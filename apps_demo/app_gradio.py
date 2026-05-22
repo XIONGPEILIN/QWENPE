@@ -50,7 +50,7 @@ pipe = QwenImagePipeline.from_pretrained(
 lora_path = "train/Qwen-Image-Edit-2511_lora-rank512-cfg/step-15000.safetensors"
 
 
-load_ste_and_lora(pipe, lora_path)
+# load_ste_and_lora(pipe, lora_path)
 
 # -----------------------------------------------------------------------------
 # 3. 推理函数

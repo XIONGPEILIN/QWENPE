@@ -90,12 +90,13 @@ def main():
     parser.add_argument("--json_path", required=True, type=str, help="Path to JSON dataset")
     parser.add_argument("--input_path", required=True, type=str, help="Base path for images")
     parser.add_argument("--output_path", required=True, type=str, help="Output directory")
+    parser.add_argument("--output_sub_path", default=None, type=str, help="Output directory for out_sub images")
     parser.add_argument("--lora_path", required=True, type=str, help="Path to LoRA safetensors")
     parser.add_argument("--model_id", default="Qwen/Qwen-Image-Edit-2511", type=str, help="Qwen model ID")
     parser.add_argument("--steps", default=50, type=int, help="Inference steps")
     parser.add_argument("--cfg_scale", default=2.0, type=float, help="CFG scale")
     parser.add_argument("--seed", default=0, type=int, help="Random seed")
-    parser.add_argument("--inpaint_blend_alpha", default=0.0, type=float, help="Blending alpha for inpainting")
+    parser.add_argument("--inpaint_blend_alpha", default=0.1, type=float, help="Blending alpha for inpainting")
     parser.add_argument("--num_gpus", default=1, type=int, help="Number of GPUs")
     parser.add_argument("--gpu_ids", default=None, type=str, help="GPU IDs (e.g. '0,1')")
     parser.add_argument("--use_bbox_mask", action="store_true", help="Use BBox mask instead of pixel mask for blending")
@@ -123,6 +124,8 @@ def main():
 
     if not os.path.exists(args.output_path):
         os.makedirs(args.output_path)
+    if args.output_sub_path and not os.path.exists(args.output_sub_path):
+        os.makedirs(args.output_sub_path)
 
     run_multi_gpu(args, data_list, gpu_ids)
 
@@ -140,9 +143,12 @@ def run_multi_gpu(args, data_list, gpu_ids):
         
         img_basename = os.path.basename(rel_img_path)
         out_path = os.path.join(args.output_path, img_basename)
+        out_sub_path = os.path.join(args.output_sub_path, img_basename) if args.output_sub_path else None
         
-        if not os.path.exists(out_path):
-            tasks.append((img_path, mask_path, prompt, out_path))
+        output_exists = os.path.exists(out_path)
+        out_sub_exists = (out_sub_path is None) or os.path.exists(out_sub_path)
+        if not (output_exists and out_sub_exists):
+            tasks.append((img_path, mask_path, prompt, out_path, out_sub_path))
                 
     total_tasks = len(tasks)
     print(f"[INFO] Total tasks: {total_tasks}")
@@ -186,13 +192,13 @@ def gpu_worker(gpu_id, task_queue, done_counter, total_tasks, args):
         except Empty:
             break
         
-        img_path, mask_path, prompt, out_path = task
+        img_path, mask_path, prompt, out_path, out_sub_path = task
         try:
             image_pil = Image.open(img_path).convert("RGB")
             image_pil, iw, ih, tw, th = preprocess_image(image_pil)
             back_mask = process_mask(mask_path, iw, ih, tw, th)
 
-            output_image, _ = pipe(
+            output_image, out_sub = pipe(
                 prompt=prompt,
                 edit_image=[image_pil],
                 edit_image_auto_resize=False,
@@ -205,7 +211,11 @@ def gpu_worker(gpu_id, task_queue, done_counter, total_tasks, args):
                 inpaint_blend_alpha=args.inpaint_blend_alpha,
                 use_bbox_mask=args.use_bbox_mask,
             )
+            if tw != iw or th != ih:
+                output_image = output_image.crop((0, 0, iw, ih))
             output_image.save(out_path)
+            if out_sub is not None and out_sub_path is not None:
+                out_sub.save(out_sub_path)
         except Exception as e:
             print(f"[GPU {gpu_id}] Error: {e}")
             

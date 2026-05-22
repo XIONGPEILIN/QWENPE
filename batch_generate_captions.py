@@ -20,7 +20,7 @@ API_URLS = [
     "http://localhost:7514/v1/chat/completions",
     "http://localhost:7515/v1/chat/completions"
 ]
-MODEL_NAME = "Qwen/Qwen3-VL-32B-Instruct"
+MODEL_NAME = "Qwen/Qwen3.5-27B"
 NUM_THREADS = 16  # High concurrency
 
 def encode_image(image_path):

@@ -1,0 +1,10 @@
+{
+  "source_file": "/home/yanai-lab/xiong-p/qwen/dataset_qwen_pe_fixed.json",
+  "edit_type_source": "/home/yanai-lab/xiong-p/qwen/picobanana/openimages/pico_sam_output_ALL_20251206_032609/processing_log.json",
+  "output_file": "/home/yanai-lab/xiong-p/qwen/subject_driven_datasets/dataset_qwen_pe_fixed_subject_driven_no_remove.json",
+  "total_rows_in_fixed": 43869,
+  "removed_exact_remove_class": 12910,
+  "kept_non_remove_rows": 30959,
+  "missing_edit_type_rows": 0,
+  "missing_examples": []
+}

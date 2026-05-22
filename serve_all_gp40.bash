@@ -4,10 +4,10 @@
 source ~/.bashrc
 
 # Activate vLLM virtual environment
-source /host/ssd2/xiong-p/env/vllm/.venv/bin/activate
+source /home/yanai-lab/xiong-p/qwen/vllm/.venv/bin/activate
 
 # Configuration
-MODEL="Qwen/Qwen3-VL-32B-Instruct"
+MODEL="Qwen/Qwen3.5-27B"
 MAX_LEN=16384
 GPU_UTIL=0.90
 TP_SIZE=2
